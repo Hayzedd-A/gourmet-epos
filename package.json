@@ -2,25 +2,64 @@
   "name": "epos",
   "version": "0.1.0",
   "private": true,
+  "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev:next": "next dev -p 7282",
+    "dev:electron:build": "tsup --config tsup.electron.config.ts --watch",
+    "dev:electron:start": "wait-on tcp:7282 dist-electron/main.js && electron .",
+    "dev": "concurrently -k -n NEXT,ELECTRON-BUILD,ELECTRON \"npm:dev:next\" \"npm:dev:electron:build\" \"npm:dev:electron:start\"",
+    "build:next": "next build",
+    "build:electron": "tsup --config tsup.electron.config.ts",
+    "build": "npm run build:next && npm run build:electron && electron-builder",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:reset": "node scripts/reset-db.mjs",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "drizzle-orm": "^0.45.2",
     "next": "16.2.10",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/serve-handler": "^6.1.4",
+    "concurrently": "^10.0.3",
+    "drizzle-kit": "^0.31.10",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "serve-handler": "^6.1.7",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsup": "^8.5.1",
+    "typescript": "^5",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "ng.zupa.epos",
+    "productName": "Gourmet Twist EPOS",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "out/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ]
   }
 }

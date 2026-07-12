@@ -1,0 +1,69 @@
+import type { Sale } from "../../shared/types/domain";
+
+const ESC = 0x1b;
+const GS = 0x1d;
+
+const INIT = Buffer.from([ESC, 0x40]);
+const BOLD_ON = Buffer.from([ESC, 0x45, 0x01]);
+const BOLD_OFF = Buffer.from([ESC, 0x45, 0x00]);
+const ALIGN_CENTER = Buffer.from([ESC, 0x61, 0x01]);
+const ALIGN_LEFT = Buffer.from([ESC, 0x61, 0x00]);
+const CUT = Buffer.from([GS, 0x56, 0x01]);
+// Standard ESC/POS cash-drawer kick pulse (pin 2, 25ms on / 250ms off).
+const KICK_DRAWER = Buffer.from([ESC, 0x70, 0x00, 0x19, 0xfa]);
+
+const LINE_WIDTH = 32;
+
+function line(text = ""): Buffer {
+  return Buffer.concat([Buffer.from(text, "ascii"), Buffer.from("\n")]);
+}
+
+function twoColumn(left: string, right: string): Buffer {
+  const gap = Math.max(1, LINE_WIDTH - left.length - right.length);
+  return line(left + " ".repeat(gap) + right);
+}
+
+function money(n: number): string {
+  return `₦${n.toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
+}
+
+/**
+ * Builds a raw ESC/POS byte buffer for a receipt. Deliberately dependency
+ * free (no thermal-printer SDK) — the command set for a basic text receipt
+ * plus a cash-drawer kick is small enough to hand-roll and keeps this app
+ * free of a second native module.
+ */
+export function buildReceiptBuffer(saleData: Sale, staffName: string): Buffer {
+  const parts: Buffer[] = [INIT, ALIGN_CENTER, BOLD_ON, line("GOURMET TWIST"), BOLD_OFF];
+  parts.push(line(new Date(saleData.soldAt).toLocaleString("en-NG")));
+  parts.push(line("-".repeat(LINE_WIDTH)));
+  parts.push(ALIGN_LEFT);
+
+  for (const item of saleData.items) {
+    parts.push(twoColumn(item.nameAtSale, money(item.lineTotal)));
+    if (item.quantity > 1) {
+      parts.push(line(`  ${item.quantity} x ${money(item.unitPriceAtSale)}`));
+    }
+  }
+
+  parts.push(line("-".repeat(LINE_WIDTH)));
+  parts.push(twoColumn("Subtotal", money(saleData.subtotal)));
+  if (saleData.discountValue > 0) {
+    parts.push(twoColumn("Discount", `-${money(saleData.discountValue)}`));
+  }
+  parts.push(BOLD_ON, twoColumn("TOTAL", money(saleData.total)), BOLD_OFF);
+  parts.push(twoColumn("Payment", saleData.paymentMethod.toUpperCase()));
+  if (saleData.amountTendered != null) {
+    parts.push(twoColumn("Tendered", money(saleData.amountTendered)));
+    parts.push(twoColumn("Change", money(Math.max(0, saleData.amountTendered - saleData.total))));
+  }
+  parts.push(line());
+  parts.push(ALIGN_CENTER, line(`Served by ${staffName}`), line("Thank you!"));
+  parts.push(line(), line(), CUT);
+
+  if (saleData.paymentMethod === "cash") {
+    parts.push(KICK_DRAWER);
+  }
+
+  return Buffer.concat(parts);
+}
