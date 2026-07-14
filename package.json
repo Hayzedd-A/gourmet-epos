@@ -11,6 +11,7 @@
     "build:next": "next build",
     "build:electron": "tsup --config tsup.electron.config.ts",
     "build": "npm run build:next && npm run build:electron && electron-builder",
+    "build:win": "npm run build:next && npm run build:electron && electron-builder --win --x64",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
@@ -20,6 +21,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.10",
     "react": "19.2.4",
@@ -49,12 +51,17 @@
   "build": {
     "appId": "ng.zupa.epos",
     "productName": "Gourmet Twist EPOS",
+    "icon": "build/icon.png",
     "directories": {
       "output": "release"
+    },
+    "win": {
+      "target": ["nsis"]
     },
     "files": [
       "dist-electron/**/*",
       "out/**/*",
+      "build/**/*",
       "node_modules/**/*",
       "package.json"
     ],

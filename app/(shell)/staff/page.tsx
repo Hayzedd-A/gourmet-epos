@@ -79,50 +79,52 @@ export default function StaffPage() {
         {error && <p className="text-sm text-danger">{error}</p>}
 
         <div className="overflow-hidden rounded-[var(--radius-panel)] border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-surface text-left text-xs uppercase tracking-wide text-muted">
-              <tr>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Role</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {staff.map((member) => (
-                <tr key={member.id}>
-                  <td className="px-4 py-3 font-medium text-ink">{member.name}</td>
-                  <td className="px-4 py-3 capitalize text-muted">{member.accessRole.replace("_", " ")}</td>
-                  <td className="flex justify-end gap-3 px-4 py-3">
-                    {member.accessRole === "super_admin" ? (
-                      <span className="text-xs text-muted">Managed via Zupa login</span>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => setEditing(member)}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(member)}
-                          className="text-sm font-medium text-danger hover:underline"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {staff.length === 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-surface text-left text-xs uppercase tracking-wide text-muted">
                 <tr>
-                  <td colSpan={3} className="px-4 py-10 text-center text-muted">
-                    No staff yet.
-                  </td>
+                  <th className="px-4 py-3 font-medium">Name</th>
+                  <th className="px-4 py-3 font-medium">Role</th>
+                  <th className="px-4 py-3" />
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {staff.map((member) => (
+                  <tr key={member.id}>
+                    <td className="px-4 py-3 font-medium text-ink">{member.name}</td>
+                    <td className="px-4 py-3 capitalize text-muted">{member.accessRole.replace("_", " ")}</td>
+                    <td className="flex justify-end gap-3 px-4 py-3">
+                      {member.accessRole === "super_admin" ? (
+                        <span className="text-xs text-muted">Managed via Zupa login</span>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => setEditing(member)}
+                            className="text-sm font-medium text-primary hover:underline"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDelete(member)}
+                            className="text-sm font-medium text-danger hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {staff.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-10 text-center text-muted">
+                      No staff yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <StaffFormModal

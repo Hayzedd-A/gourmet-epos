@@ -1,5 +1,6 @@
 import type { IpcMain } from "electron";
 import type { getDb } from "../../db/client";
+import { registerTerminalHandlers } from "./terminal";
 import { registerAuthHandlers } from "./auth";
 import { registerShiftHandlers } from "./shifts";
 import { registerCatalogHandlers } from "./catalog";
@@ -7,8 +8,11 @@ import { registerSalesHandlers } from "./sales";
 import { registerSyncHandlers } from "./sync";
 import { registerPrinterHandlers } from "./printer";
 import { registerStaffHandlers } from "./staff";
+import { registerPaymentsHandlers } from "./payments";
+import { registerHeldOrdersHandlers } from "./heldOrders";
 
 export function registerAllHandlers(ipcMain: IpcMain, db: ReturnType<typeof getDb>) {
+  registerTerminalHandlers(ipcMain, db);
   registerAuthHandlers(ipcMain, db);
   registerShiftHandlers(ipcMain, db);
   registerCatalogHandlers(ipcMain, db);
@@ -16,4 +20,6 @@ export function registerAllHandlers(ipcMain: IpcMain, db: ReturnType<typeof getD
   registerSyncHandlers(ipcMain, db);
   registerPrinterHandlers(ipcMain, db);
   registerStaffHandlers(ipcMain, db);
+  registerPaymentsHandlers(ipcMain, db);
+  registerHeldOrdersHandlers(ipcMain, db);
 }

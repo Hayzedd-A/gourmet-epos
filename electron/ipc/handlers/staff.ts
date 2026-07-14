@@ -6,7 +6,7 @@ import type { getDb } from "../../db/client";
 import { staffCache } from "../../db/schema";
 import { getTerminalConfig } from "../../db/terminal";
 import { appState } from "../../state";
-import { canManageCatalog, canManageStaff } from "../../../shared/permissions";
+import { canManageStaff } from "../../../shared/permissions";
 import { IPC_CHANNELS } from "../../../shared/types/ipc";
 import type { StaffInput, StaffMember } from "../../../shared/types/domain";
 
@@ -21,9 +21,12 @@ function toStaffMember(row: typeof staffCache.$inferSelect): StaffMember {
 }
 
 export function registerStaffHandlers(ipcMain: IpcMain, db: ReturnType<typeof getDb>) {
+  // Read-only name/role lookup — open to any logged-in role (e.g. the Sales
+  // page resolves staff names for staff too, see docs/ARCHITECTURE.md §6).
+  // Actually managing staff (create/update/delete below) stays super_admin-only.
   ipcMain.handle(IPC_CHANNELS.staffList, (): StaffMember[] => {
-    if (!canManageCatalog(appState.session?.accessRole)) {
-      throw new Error("Admin access required");
+    if (!appState.session) {
+      throw new Error("Not logged in");
     }
     return db.select().from(staffCache).all().map(toStaffMember);
   });

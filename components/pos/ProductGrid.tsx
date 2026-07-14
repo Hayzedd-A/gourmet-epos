@@ -1,81 +1,107 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatNaira } from "../../lib/format";
-import type { BaseProduct, Category, Product } from "../../shared/types/domain";
+import { matchesProductSearch } from "../../shared/productSearch";
+import { productLabelFor } from "../../shared/productLabel";
+import type { Product } from "../../shared/types/domain";
+
+export type SourceTab = "zupa" | "terminal";
+
+// "terminal" covers both csv_import and manual — everything that isn't the
+// live Zupa catalog. See docs/ARCHITECTURE.md §4.2.
+export function matchesTab(product: Product, tab: SourceTab): boolean {
+  return tab === "zupa"
+    ? product.source === "zupa_catalog"
+    : product.source !== "zupa_catalog";
+}
 
 interface ProductGridProps {
-  baseProducts: BaseProduct[];
   products: Product[];
-  categories: Category[];
-  onSelect: (baseProduct: BaseProduct, variants: Product[]) => void;
+  sourceTab: SourceTab;
+  search: string;
+  onSelect: (product: Product) => void;
 }
 
-function priceLabel(variants: Product[]): string {
-  const prices = variants.map((v) => v.unitPrice);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  return min === max ? formatNaira(min) : `${formatNaira(min)}–${formatNaira(max)}`;
-}
+export function ProductGrid({
+  products,
+  sourceTab,
+  search,
+  onSelect,
+}: ProductGridProps) {
+  const [category, setCategory] = useState<string | "all">("all");
 
-export function ProductGrid({ baseProducts, products, categories, onSelect }: ProductGridProps) {
-  const [categoryId, setCategoryId] = useState<string | "all">("all");
-
-  const variantsByBaseProduct = new Map<string, Product[]>();
-  for (const p of products) {
-    if (!p.isAvailable) continue;
-    const list = variantsByBaseProduct.get(p.baseProductId) ?? [];
-    list.push(p);
-    variantsByBaseProduct.set(p.baseProductId, list);
-  }
-
-  const visible = baseProducts.filter(
-    (bp) =>
-      (categoryId === "all" || bp.categoryId === categoryId) &&
-      (variantsByBaseProduct.get(bp.id)?.length ?? 0) > 0,
+  const inTab = useMemo(
+    () => products.filter((p) => p.isAvailable && matchesTab(p, sourceTab)),
+    [products, sourceTab],
   );
 
+  const categories = useMemo(
+    () =>
+      [...new Set(inTab.map((p) => p.category))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [inTab],
+  );
+
+  const searching = search.trim().length > 0;
+
+  // Search overrides the category pill — it searches the whole tab so
+  // switching categories isn't needed just to find something by name.
+  const visible = searching
+    ? inTab.filter((p) => matchesProductSearch(productLabelFor(p), search))
+    : inTab.filter((p) => category === "all" || p.category === category);
+
   return (
-    <div className="flex h-full flex-col gap-4">
-      <div className="flex gap-2 overflow-x-auto pb-1">
+    <div className="flex h-full flex-col gap-3">
+      <div className="flex gap-2 [-webkit-scrollbar:none] scrollbar-none overflow-x-auto pb-1">
         <button
-          onClick={() => setCategoryId("all")}
-          className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-            categoryId === "all" ? "bg-primary text-primary-ink" : "bg-surface text-ink hover:bg-surface-hover"
+          onClick={() => setCategory("all")}
+          disabled={searching}
+          className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 ${
+            category === "all"
+              ? "bg-primary text-primary-ink"
+              : "bg-surface text-ink hover:bg-surface-hover"
           }`}
         >
           All
         </button>
         {categories.map((c) => (
           <button
-            key={c.id}
-            onClick={() => setCategoryId(c.id)}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              categoryId === c.id ? "bg-primary text-primary-ink" : "bg-surface text-ink hover:bg-surface-hover"
+            key={c}
+            onClick={() => setCategory(c)}
+            disabled={searching}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 ${
+              category === c
+                ? "bg-primary text-primary-ink"
+                : "bg-surface text-ink hover:bg-surface-hover"
             }`}
           >
-            {c.name}
+            {c}
           </button>
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3 xl:grid-cols-4">
-        {visible.map((bp) => {
-          const variants = variantsByBaseProduct.get(bp.id) ?? [];
-          return (
-            <button
-              key={bp.id}
-              onClick={() => onSelect(bp, variants)}
-              className="flex h-28 flex-col justify-between rounded-[var(--radius-panel)] border border-border bg-surface p-4 text-left transition-colors hover:bg-surface-hover active:scale-[0.98]"
-            >
-              <span className="text-sm font-medium text-ink">{bp.name}</span>
-              <span className="font-figures text-base font-semibold text-ink">{priceLabel(variants)}</span>
-            </button>
-          );
-        })}
+      <div className="grid grid-cols-2 [-webkit-scrollbar:none] scrollbar-none gap-3 max-h-[calc(100vh-14rem)] scrollbar-hide overflow-y-auto sm:grid-cols-3 xl:grid-cols-4">
+        {visible.map((product) => (
+          <button
+            key={product.id}
+            onClick={() => onSelect(product)}
+            className="flex h-28 flex-col justify-between rounded-panel border border-border bg-surface p-4 text-left transition-colors hover:bg-surface-hover active:scale-[0.98]"
+          >
+            <span className="text-sm font-medium text-ink">
+              {productLabelFor(product)}
+            </span>
+            <span className="font-figures text-base font-semibold text-ink">
+              {formatNaira(product.price)}
+            </span>
+          </button>
+        ))}
         {visible.length === 0 && (
           <p className="col-span-full py-12 text-center text-sm text-muted">
-            No products in this category.
+            {searching
+              ? "No products match your search."
+              : "No products in this category."}
           </p>
         )}
       </div>

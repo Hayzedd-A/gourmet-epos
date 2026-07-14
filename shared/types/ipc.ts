@@ -1,9 +1,11 @@
 import type {
-  BaseProduct,
-  Category,
-  CategorySize,
+  HeldOrderFinalizeInput,
+  HeldOrderInput,
+  PaymentMethodOption,
+  PaymentReceiptCandidate,
   Product,
   ProductInput,
+  ReconcileSummary,
   Sale,
   SaleInput,
   Session,
@@ -11,6 +13,7 @@ import type {
   StaffInput,
   StaffMember,
   SyncState,
+  TerminalStatus,
 } from "./domain";
 
 /**
@@ -19,6 +22,15 @@ import type {
  * ipcMain.handle registrations in electron/ipc/handlers/*.
  */
 export interface Api {
+  // Device identity against Zupa's Terminal API — a hard gate before
+  // login (see docs/ARCHITECTURE.md §6). Separate from `auth` below,
+  // which is about which person is using an already-activated terminal.
+  terminal: {
+    getStatus(): Promise<TerminalStatus>;
+    // Validates the key against the real endpoint and stores it on
+    // success; throws with a clear message on an invalid/inactive key.
+    activate(apiKey: string): Promise<TerminalStatus>;
+  };
   auth: {
     loginPin(pin: string): Promise<Session>;
     // The super admin's only login path (real Zupa email/password). As a
@@ -29,26 +41,67 @@ export interface Api {
     logout(): Promise<void>;
   };
   shifts: {
-    open(openingFloat: number): Promise<Shift>;
-    close(closingTotal: number): Promise<Shift>;
+    // No cash is accepted, so there's nothing to reconcile at open/close —
+    // a shift is just a start/end time window.
+    open(): Promise<Shift>;
+    close(): Promise<Shift>;
     current(): Promise<Shift | null>;
   };
   catalog: {
+    // Returns every cached product (both terminal and zupa sources) — the
+    // Zupa/Terminal tab split in the UI filters this client-side by
+    // `source`, it's not two separate calls. See docs/ARCHITECTURE.md §5.
     listProducts(): Promise<Product[]>;
-    listBaseProducts(): Promise<BaseProduct[]>;
-    listCategories(): Promise<Category[]>;
-    listCategorySizes(): Promise<CategorySize[]>;
-    // Local-only: adjusts a pulled variant's price/availability/stock for
-    // this terminal's display. Does NOT write through to Zupa — creating or
-    // renaming catalog entries still has to happen in Zupa's own admin tool
-    // until its real write endpoints for the base-product/size-variant
-    // hierarchy are confirmed. See docs/ARCHITECTURE.md §7.
+    // Local-only: adjusts a pulled product's price/availability for this
+    // terminal's display. Does NOT write through to Zupa — catalog
+    // creation/renaming/category changes still happen in Zupa's own admin
+    // tool. See docs/ARCHITECTURE.md §7.
     updateProductLocal(id: string, input: ProductInput): Promise<Product>;
+    // Synced payment methods (GET /terminal-api/payment-methods/sync) for
+    // the checkout picker — see docs/ARCHITECTURE.md §8.
+    listPaymentMethods(): Promise<PaymentMethodOption[]>;
   };
   sales: {
     create(input: SaleInput): Promise<Sale>;
-    list(params?: { from?: number; to?: number }): Promise<Sale[]>;
+    // Only ever returns finalized sales (completed/voided) — held orders
+    // live in `heldOrders` below. See docs/ARCHITECTURE.md §9. Staff only
+    // ever get their own sales back regardless of `staffId` — enforced
+    // server-side, not just a UI filter; `staffId` is only honored for
+    // admin/super_admin (see canViewAllSales).
+    list(params?: { from?: number; to?: number; staffId?: string }): Promise<Sale[]>;
     void(saleId: string, reason: string): Promise<Sale>;
+  };
+  // A sale not yet finalized — covers both a quick-stash (park an
+  // in-progress cart, resume later) and dine-in (a table's running tab,
+  // added to over time). See docs/ARCHITECTURE.md §9.
+  heldOrders: {
+    // Every held order on this terminal, oldest-opened first.
+    list(): Promise<Sale[]>;
+    // Creates a new held order, or — with `existingId` set — replaces an
+    // existing one's items/label in place (e.g. resumed, edited, held again).
+    hold(input: HeldOrderInput): Promise<Sale>;
+    // Abandons a held order (e.g. the table/customer never came back).
+    // Distinct from `sales.void`, which is for a completed sale.
+    discard(id: string): Promise<Sale>;
+    // Turns a held order into a real completed sale: payment is chosen
+    // here, never while held.
+    finalize(id: string, input: HeldOrderFinalizeInput): Promise<Sale>;
+  };
+  payments: {
+    // POST /terminal-api/payment/search — find pending Squad receipts by
+    // amount (±₦1), sale time (±30min), and payment method (scopes the
+    // Squad merchant lookup server-side).
+    search(params: { amount: number; time?: string; paymentMethodId?: string }): Promise<{
+      count: number;
+      receipts: PaymentReceiptCandidate[];
+    }>;
+    // Claims a receipt for a specific sale (POST /terminal-api/payment/match)
+    // and marks the sale matched locally. Returns the updated sale.
+    match(saleId: string, transactionRef: string): Promise<Sale>;
+    // Bulk end-of-day pass over every unmatched sale: auto-claims only when
+    // the search returns exactly one candidate, leaves the rest for manual
+    // review on the Reconciliation page.
+    reconcileAll(): Promise<ReconcileSummary>;
   };
   staff: {
     list(): Promise<StaffMember[]>;
@@ -68,6 +121,8 @@ export interface Api {
 }
 
 export const IPC_CHANNELS = {
+  terminalGetStatus: "terminal:getStatus",
+  terminalActivate: "terminal:activate",
   authLoginPin: "auth:loginPin",
   authGetSession: "auth:getSession",
   authLogout: "auth:logout",
@@ -76,13 +131,18 @@ export const IPC_CHANNELS = {
   shiftsClose: "shifts:close",
   shiftsCurrent: "shifts:current",
   catalogListProducts: "catalog:listProducts",
-  catalogListBaseProducts: "catalog:listBaseProducts",
-  catalogListCategories: "catalog:listCategories",
-  catalogListCategorySizes: "catalog:listCategorySizes",
   catalogUpdateProductLocal: "catalog:updateProductLocal",
+  catalogListPaymentMethods: "catalog:listPaymentMethods",
   salesCreate: "sales:create",
   salesList: "sales:list",
   salesVoid: "sales:void",
+  heldOrdersList: "heldOrders:list",
+  heldOrdersHold: "heldOrders:hold",
+  heldOrdersDiscard: "heldOrders:discard",
+  heldOrdersFinalize: "heldOrders:finalize",
+  paymentsSearch: "payments:search",
+  paymentsMatch: "payments:match",
+  paymentsReconcileAll: "payments:reconcileAll",
   staffList: "staff:list",
   staffCreate: "staff:create",
   staffUpdate: "staff:update",

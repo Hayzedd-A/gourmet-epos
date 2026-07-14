@@ -9,3 +9,13 @@ export function canManageCatalog(role: AccessRole | undefined | null): boolean {
 export function canManageStaff(role: AccessRole | undefined | null): boolean {
   return role === "super_admin";
 }
+
+/** admin and super_admin; staff cannot access payment reconciliation. */
+export function canReconcilePayments(role: AccessRole | undefined | null): boolean {
+  return role === "admin" || role === "super_admin";
+}
+
+/** admin and super_admin see every sale; staff only ever see their own — enforced server-side in sales:list, not just hidden in the UI. */
+export function canViewAllSales(role: AccessRole | undefined | null): boolean {
+  return role === "admin" || role === "super_admin";
+}

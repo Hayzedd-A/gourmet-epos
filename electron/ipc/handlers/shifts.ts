@@ -17,7 +17,7 @@ function requireSession() {
 }
 
 export function registerShiftHandlers(ipcMain: IpcMain, db: ReturnType<typeof getDb>) {
-  ipcMain.handle(IPC_CHANNELS.shiftsOpen, (_event, openingFloat: number): Shift => {
+  ipcMain.handle(IPC_CHANNELS.shiftsOpen, (): Shift => {
     const session = requireSession();
     const config = getTerminalConfig(db);
 
@@ -31,24 +31,19 @@ export function registerShiftHandlers(ipcMain: IpcMain, db: ReturnType<typeof ge
       terminalId: config.terminalId,
       openedAt: Date.now(),
       closedAt: null,
-      openingFloat,
-      closingTotal: null,
     };
     db.insert(shift).values(row).run();
     appState.session = { ...session, shiftId: row.id };
     return row;
   });
 
-  ipcMain.handle(IPC_CHANNELS.shiftsClose, (_event, closingTotal: number): Shift => {
+  ipcMain.handle(IPC_CHANNELS.shiftsClose, (): Shift => {
     const session = requireSession();
     if (!session.shiftId) {
       throw new Error("No open shift for this session");
     }
 
-    db.update(shift)
-      .set({ closedAt: Date.now(), closingTotal })
-      .where(eq(shift.id, session.shiftId))
-      .run();
+    db.update(shift).set({ closedAt: Date.now() }).where(eq(shift.id, session.shiftId)).run();
 
     const updated = db.select().from(shift).where(eq(shift.id, session.shiftId)).get();
     if (!updated) {

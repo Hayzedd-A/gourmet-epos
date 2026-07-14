@@ -2,7 +2,7 @@ import type { getDb } from "../db/client";
 import { outbox, syncMeta } from "../db/schema";
 import { getTerminalConfig } from "../db/terminal";
 import { drainOutbox } from "./push";
-import { pullCatalog } from "./pull";
+import { pullCatalog, pullPaymentMethods } from "./pull";
 import { isOnline } from "./network";
 import type { SyncState } from "../../shared/types/domain";
 
@@ -22,6 +22,7 @@ export async function runSyncOnce(db: ReturnType<typeof getDb>): Promise<void> {
   try {
     await drainOutbox(db);
     await pullCatalog(db);
+    await pullPaymentMethods(db);
     runtimeState.lastError = null;
   } catch (cause) {
     runtimeState.lastError = (cause as Error).message;
@@ -47,11 +48,13 @@ export function getSyncState(db: ReturnType<typeof getDb>): SyncState {
     lastSyncedAt[row.resource] = row.lastSyncedAt;
   }
 
+  const config = getTerminalConfig(db);
   return {
     online: runtimeState.online,
     pendingOutboxCount,
     lastSyncedAt,
     lastError: runtimeState.lastError,
-    authenticated: getTerminalConfig(db).jwt !== null,
+    activated: config.apiKey !== null,
+    authenticated: config.jwt !== null,
   };
 }

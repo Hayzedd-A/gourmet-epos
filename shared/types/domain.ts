@@ -7,9 +7,56 @@ export type AccessRole = "staff" | "admin" | "super_admin";
 // something you create, it's inherent to holding real Zupa admin credentials.
 export type AssignableAccessRole = "staff" | "admin";
 
-export type PaymentMethod = "cash" | "card" | "transfer";
+// Synced from GET /terminal-api/payment-methods/sync — the methods an admin
+// has assigned to this terminal (e.g. "Squad POS — Counter 1", "Bank
+// Transfer"). No more fixed "card"|"transfer" enum — new options are added
+// centrally in Zupa. `type` is informational only ("squad_pos"|"cash"|
+// "bank_transfer"|"other"); the method's Squad `merchantId` is resolved
+// server-side and never sent to or stored by the terminal. See
+// docs/ARCHITECTURE.md §8.
+export interface PaymentMethodOption {
+  id: string;
+  name: string;
+  type: string | null;
+  isActive: boolean;
+}
 
-export type SaleStatus = "completed" | "voided";
+// A pending Squad receipt returned by POST /terminal-api/payment/search,
+// searched by amount (±₦1) and sale time (±30min). `narration` (bank sender
+// name) and `paidAt` are what a person uses to disambiguate when multiple
+// receipts share the same amount — the terminal itself doesn't know payer
+// identity. See electron/zupa/client.ts.
+export interface PaymentReceiptCandidate {
+  id: string;
+  transactionRef: string;
+  gatewayRef: string | null;
+  amount: number;
+  narration: string | null;
+  transactionType: string | null;
+  paidAt: string;
+}
+
+export type PaymentMatchStatus = "unmatched" | "matched";
+
+// Outcome of a bulk reconciliation pass (electron/ipc/handlers/payments.ts
+// tryAutoMatchSale, looped over every unmatched sale). Only exact
+// single-candidate matches are auto-claimed; ambiguous/no-match sales stay
+// unmatched for a person to resolve on the Reconciliation page.
+export interface ReconcileSummary {
+  attempted: number;
+  matched: number;
+  ambiguous: number;
+  none: number;
+  errors: number;
+}
+
+// "held" is a sale row that hasn't been finalized yet — covers both a
+// quick-stash (park an in-progress cart, resume later) and dine-in (a
+// table's running tab, added to over time). "discarded" is a held order
+// abandoned before ever being finalized (never had a soldAt) — distinct
+// from "voided", which undoes a real completed sale. See
+// docs/ARCHITECTURE.md §9.
+export type SaleStatus = "held" | "discarded" | "completed" | "voided";
 
 export type SyncStatus = "pending" | "synced" | "failed";
 
@@ -18,6 +65,13 @@ export interface Session {
   name: string;
   accessRole: AccessRole;
   shiftId: string | null;
+}
+
+// Device identity against Zupa's Terminal API — separate from any person's
+// session (Session above). See docs/ARCHITECTURE.md §6.
+export interface TerminalStatus {
+  activated: boolean;
+  storeId: string | null;
 }
 
 // A staff/admin/super_admin roster row, as shown on the Staff management
@@ -38,54 +92,35 @@ export interface StaffInput {
   accessRole: AssignableAccessRole;
 }
 
-// A display grouping (e.g. "Bread"). Not itself sellable.
-export interface Category {
-  id: string;
-  name: string;
-  position: number;
-  active: boolean;
-}
+// Where a product row came from — two parallel catalogs that are never
+// merged in the UI (a Zupa/Terminal tab switch instead): `csv_import` and
+// `manual` are both the "terminal" catalog (legacy CSV-seeded products plus
+// ones added directly via Zupa's catalog-admin tool); `zupa_catalog` is
+// Zupa's live store catalog. See docs/ARCHITECTURE.md §4.2.
+export type ProductSource = "csv_import" | "zupa_catalog" | "manual";
 
-// The sizes offered within a category (e.g. Mini/Regular/Maxi for "Bread").
-export interface CategorySize {
-  id: string;
-  name: string;
-  position: number;
-  categoryId: string;
-}
-
-// What staff tap in the POS grid (e.g. "Cinnamon Swirl Bread"). Not itself
-// sellable — has 1+ size variants in Product below, each its own price.
-export interface BaseProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  categoryId: string | null;
-  updatedAt: number;
-}
-
-// One sellable size variant of a base product, e.g. "Cinnamon Swirl Bread,
-// Maxi" at its own price — this is what actually goes into a sale.
+// One sellable row, already fully resolved (size baked in via
+// `variantDescription` — no separate base-product/size-picker step, unlike
+// the older customer-requests-based model this replaces).
 export interface Product {
   id: string;
   name: string;
-  unitPrice: number;
-  baseProductId: string;
-  categorySizeId: string | null;
-  imageUrl: string | null;
+  category: string;
+  description: string | null;
+  price: number;
+  priceExTax: number;
+  variantDescription: string | null;
+  source: ProductSource;
   isAvailable: boolean;
-  quantity: number;
   updatedAt: number;
 }
 
-// Local-only edit of an existing variant (price/availability/stock).
-// Catalog creation/renaming still has to happen in Zupa's own admin tool
-// until its real write endpoints for this hierarchy are confirmed — see
-// docs/ARCHITECTURE.md §7.
+// Local-only edit of an existing product (price/availability). Catalog
+// creation/renaming/category changes still happen in Zupa's own admin
+// tool (ZupaFE) — see docs/ARCHITECTURE.md §7.
 export interface ProductInput {
-  unitPrice: number;
+  price: number;
   isAvailable: boolean;
-  quantity: number;
 }
 
 export interface Shift {
@@ -94,8 +129,6 @@ export interface Shift {
   terminalId: string;
   openedAt: number;
   closedAt: number | null;
-  openingFloat: number;
-  closingTotal: number | null;
 }
 
 export interface SaleItemInput {
@@ -107,8 +140,26 @@ export interface SaleInput {
   shiftId: string;
   items: SaleItemInput[];
   discountValue: number;
-  paymentMethod: PaymentMethod;
-  amountTendered: number | null;
+  paymentMethodId: string;
+}
+
+// Holding a cart (new) or re-holding one already in progress (`existingId`
+// set — e.g. resuming, editing, then setting it aside again). `label` is
+// the table/customer identifier, optional for a quick anonymous stash.
+export interface HeldOrderInput {
+  shiftId: string;
+  items: SaleItemInput[];
+  label: string | null;
+  existingId?: string;
+}
+
+// Finalizing a held order into a real completed sale — payment is chosen
+// here, never while held (see docs/ARCHITECTURE.md §9). `items` is the full,
+// current item set (it may have changed since the order was first held).
+export interface HeldOrderFinalizeInput {
+  items: SaleItemInput[];
+  discountValue: number;
+  paymentMethodId: string;
 }
 
 export interface SaleItem {
@@ -125,25 +176,38 @@ export interface Sale {
   id: string;
   shiftId: string;
   staffId: string;
-  branchId: string;
+  storeId: string;
   terminalId: string;
   status: SaleStatus;
   subtotal: number;
   discountValue: number;
   taxValue: number;
   total: number;
-  paymentMethod: PaymentMethod;
-  amountTendered: number | null;
-  soldAt: number;
+  // Null while `status: "held"` — set only at final checkout.
+  paymentMethodId: string | null;
+  paymentMethodLabel: string | null;
+  transactionRef: string | null;
+  matchStatus: PaymentMatchStatus;
+  matchedAt: number | null;
+  openedAt: number;
+  updatedAt: number;
+  label: string | null;
+  // Null while `status: "held"` — set at finalization, not creation.
+  soldAt: number | null;
   syncStatus: SyncStatus;
   serverOrderId: string | null;
+  voidReason: string | null;
   items: SaleItem[];
 }
 
 export interface SyncState {
   online: boolean;
   pendingOutboxCount: number;
-  lastSyncedAt: Partial<Record<"catalog" | "staff", number>>;
+  lastSyncedAt: Partial<Record<"catalog" | "staff" | "paymentMethods", number>>;
   lastError: string | null;
+  // Terminal activated (has an apiKey) — gates catalog sync.
+  activated: boolean;
+  // Super admin has connected via Zupa login (has a jwt) — unrelated to
+  // catalog sync, kept for whatever still needs a person-level credential.
   authenticated: boolean;
 }

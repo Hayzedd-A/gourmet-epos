@@ -1,147 +1,9 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6a0ba84d-d96c-4f61-a5bd-730a72f0a060",
+  "id": "8c8500c8-c96a-497e-bfc7-cee2543a72e3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
-    "base_product_cache": {
-      "name": "base_product_cache",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "category_id": {
-          "name": "category_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "category_cache": {
-      "name": "category_cache",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "active": {
-          "name": "active",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "category_size_cache": {
-      "name": "category_size_cache",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "category_id": {
-          "name": "category_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "outbox": {
       "name": "outbox",
       "columns": {
@@ -182,6 +44,52 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "payment_method_cache": {
+      "name": "payment_method_cache",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "product_cache": {
       "name": "product_cache",
       "columns": {
@@ -199,29 +107,57 @@
           "notNull": true,
           "autoincrement": false
         },
-        "unit_price": {
-          "name": "unit_price",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "base_product_id": {
-          "name": "base_product_id",
+        "category": {
+          "name": "category",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "category_size_id": {
-          "name": "category_size_id",
+        "description": {
+          "name": "description",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "image_url": {
-          "name": "image_url",
+        "price": {
+          "name": "price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "price_ex_tax": {
+          "name": "price_ex_tax",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "variant_description": {
+          "name": "variant_description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "remote_id": {
+          "name": "remote_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "zupa_product_id": {
+          "name": "zupa_product_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -234,14 +170,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
         },
         "updated_at": {
           "name": "updated_at",
@@ -281,8 +209,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "branch_id": {
-          "name": "branch_id",
+        "store_id": {
+          "name": "store_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -333,16 +261,59 @@
           "notNull": true,
           "autoincrement": false
         },
-        "payment_method": {
-          "name": "payment_method",
+        "payment_method_id": {
+          "name": "payment_method_id",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "payment_method_label": {
+          "name": "payment_method_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "transaction_ref": {
+          "name": "transaction_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "match_status": {
+          "name": "match_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unmatched'"
+        },
+        "matched_at": {
+          "name": "matched_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "amount_tendered": {
-          "name": "amount_tendered",
-          "type": "real",
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -351,7 +322,7 @@
           "name": "sold_at",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "sync_status": {
@@ -479,20 +450,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "opening_float": {
-          "name": "opening_float",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "closing_total": {
-          "name": "closing_total",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         }
       },
       "indexes": {},
@@ -582,13 +539,6 @@
           "autoincrement": false,
           "default": "'default'"
         },
-        "branch_id": {
-          "name": "branch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "terminal_id": {
           "name": "terminal_id",
           "type": "text",
@@ -603,12 +553,34 @@
           "notNull": true,
           "autoincrement": false
         },
+        "api_key": {
+          "name": "api_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "store_id": {
+          "name": "store_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "jwt": {
           "name": "jwt",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "theme": {
+          "name": "theme",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'light'"
         }
       },
       "indexes": {},

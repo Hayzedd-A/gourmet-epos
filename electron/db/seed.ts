@@ -2,33 +2,30 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { hashPin } from "../auth/pin";
 import type { getDb } from "./client";
-import {
-  baseProductCache,
-  categoryCache,
-  categorySizeCache,
-  productCache,
-  staffCache,
-  syncMeta,
-  terminalConfig,
-} from "./schema";
+import { paymentMethodCache, productCache, staffCache, syncMeta, terminalConfig } from "./schema";
 
-const SYNC_RESOURCES = ["catalog", "staff"] as const;
+const SYNC_RESOURCES = ["catalog", "staff", "paymentMethods"] as const;
 
 /**
  * Populates a fresh local database with enough demo data (terminal identity,
  * two staff PINs, a starter catalog) to run the POS end to end before this
- * terminal has ever synced with zupa-api. Every insert is guarded so this is
- * safe to call on every app start — it only fills in what's missing.
+ * terminal has ever been activated against Zupa's Terminal API. Every
+ * insert is guarded so this is safe to call on every app start — it only
+ * fills in what's missing. Demo products are tagged `source: "csv_import"`
+ * (the "Terminal Products" tab) since there's no real zupa_catalog data
+ * available before activation.
  */
 export function seed(db: ReturnType<typeof getDb>) {
   let config = db.select().from(terminalConfig).where(eq(terminalConfig.id, "default")).get();
   if (!config) {
     config = {
       id: "default",
-      branchId: "demo-branch",
       terminalId: "demo-terminal-1",
       deviceSecret: randomUUID(),
+      apiKey: null,
+      storeId: null,
       jwt: null,
+      theme: "light",
     };
     db.insert(terminalConfig).values(config).run();
   }
@@ -48,7 +45,7 @@ export function seed(db: ReturnType<typeof getDb>) {
         },
         {
           id: randomUUID(),
-          name: "Cashier",
+          name: "Till Staff",
           pinHash: hashPin("1234", deviceSecret),
           accessRole: "staff",
           updatedAt: now,
@@ -57,87 +54,65 @@ export function seed(db: ReturnType<typeof getDb>) {
       .run();
   }
 
-  const categoryCount = db.select().from(categoryCache).all().length;
-  if (categoryCount === 0) {
-    const breadId = randomUUID();
-    const drinksId = randomUUID();
-    db.insert(categoryCache)
-      .values([
-        { id: breadId, name: "Bread", position: 1, active: true, updatedAt: 0 },
-        { id: drinksId, name: "Drinks", position: 2, active: true, updatedAt: 0 },
-      ])
-      .run();
-
-    // Bread comes in sizes, each a differently-priced sellable variant.
-    const breadSizes = [
-      { id: randomUUID(), name: "Mini", position: 1 },
-      { id: randomUUID(), name: "Regular", position: 2 },
-      { id: randomUUID(), name: "Maxi", position: 3 },
+  const productCount = db.select().from(productCache).all().length;
+  if (productCount === 0) {
+    const breadVariants = [
+      { name: "Original Banana Bread", prices: { Mini: 2500, Regular: 4500, Maxi: 7500 } },
+      { name: "Chocolate Chip Banana Bread", prices: { Mini: 3000, Regular: 5000, Maxi: 8200 } },
+      { name: "Walnut Banana Bread", prices: { Mini: 3200, Regular: 5500, Maxi: 8800 } },
+      { name: "Cinnamon Swirl Banana Bread", prices: { Mini: 3200, Regular: 5500, Maxi: 8800 } },
     ];
-    const standardSize = { id: randomUUID(), name: "Standard", position: 1 };
-    db.insert(categorySizeCache)
-      .values([
-        ...breadSizes.map((s) => ({ ...s, categoryId: breadId, updatedAt: 0 })),
-        { ...standardSize, categoryId: drinksId, updatedAt: 0 },
-      ])
-      .run();
-
-    const breadBaseProducts = [
-      { id: randomUUID(), name: "Original Banana Bread", prices: [2500, 4500, 7500] },
-      { id: randomUUID(), name: "Chocolate Chip Banana Bread", prices: [3000, 5000, 8200] },
-      { id: randomUUID(), name: "Walnut Banana Bread", prices: [3200, 5500, 8800] },
-      { id: randomUUID(), name: "Cinnamon Swirl Banana Bread", prices: [3200, 5500, 8800] },
-    ];
-    const drinkBaseProducts = [
-      { id: randomUUID(), name: "Bottled Water", price: 500 },
-      { id: randomUUID(), name: "Chapman", price: 1500 },
+    const drinks = [
+      { name: "Bottled Water", price: 500 },
+      { name: "Chapman", price: 1500 },
     ];
 
-    db.insert(baseProductCache)
-      .values([
-        ...breadBaseProducts.map((p) => ({
-          id: p.id,
-          name: p.name,
-          description: null,
-          categoryId: breadId,
-          updatedAt: 0,
-        })),
-        ...drinkBaseProducts.map((p) => ({
-          id: p.id,
-          name: p.name,
-          description: null,
-          categoryId: drinksId,
-          updatedAt: 0,
-        })),
-      ])
-      .run();
-
-    db.insert(productCache)
-      .values([
-        ...breadBaseProducts.flatMap((p) =>
-          breadSizes.map((size, i) => ({
-            id: randomUUID(),
-            name: p.name,
-            unitPrice: p.prices[i],
-            baseProductId: p.id,
-            categorySizeId: size.id,
-            imageUrl: null,
-            isAvailable: true,
-            quantity: 20,
-            updatedAt: 0,
-          })),
-        ),
-        ...drinkBaseProducts.map((p) => ({
+    const rows = [
+      ...breadVariants.flatMap((p) =>
+        Object.entries(p.prices).map(([size, price]) => ({
           id: randomUUID(),
           name: p.name,
-          unitPrice: p.price,
-          baseProductId: p.id,
-          categorySizeId: standardSize.id,
-          imageUrl: null,
+          category: "Bread",
+          description: null,
+          price,
+          priceExTax: price,
+          variantDescription: size,
+          source: "csv_import" as const,
+          remoteId: null,
+          zupaProductId: null,
           isAvailable: true,
-          quantity: 50,
           updatedAt: 0,
         })),
+      ),
+      ...drinks.map((p) => ({
+        id: randomUUID(),
+        name: p.name,
+        category: "Drinks",
+        description: null,
+        price: p.price,
+        priceExTax: p.price,
+        variantDescription: "Standard",
+        source: "csv_import" as const,
+        remoteId: null,
+        zupaProductId: null,
+        isAvailable: true,
+        updatedAt: 0,
+      })),
+    ];
+
+    db.insert(productCache).values(rows).run();
+  }
+
+  // Placeholders for before this terminal's first successful
+  // payment-methods sync (see electron/zupa/client.ts fetchPaymentMethods)
+  // — keeps checkout usable out of the box. Real synced rows overwrite
+  // these by id on first sync; these ids are our own until then.
+  const methodCount = db.select().from(paymentMethodCache).all().length;
+  if (methodCount === 0) {
+    db.insert(paymentMethodCache)
+      .values([
+        { id: "card", name: "Card", type: "squad_pos", isActive: true, updatedAt: 0 },
+        { id: "transfer", name: "Transfer", type: "bank_transfer", isActive: true, updatedAt: 0 },
       ])
       .run();
   }

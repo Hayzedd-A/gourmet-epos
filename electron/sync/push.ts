@@ -39,7 +39,7 @@ export async function drainOutbox(db: ReturnType<typeof getDb>): Promise<{ pushe
     }
 
     try {
-      const result = await zupa.pushSale(config.jwt, config.branchId, assembleSale(db, saleRow));
+      const result = await zupa.pushSale(config.jwt, saleRow.storeId, assembleSale(db, saleRow));
       db.update(sale)
         .set({ syncStatus: "synced", serverOrderId: result.id })
         .where(eq(sale.id, saleRow.id))

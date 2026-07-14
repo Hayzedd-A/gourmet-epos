@@ -32,13 +32,13 @@ export default function SettingsPage() {
 
         <div className="flex flex-col gap-4 rounded-[var(--radius-panel)] border border-border bg-surface p-5">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-ink">Zupa connection</span>
+            <span className="text-sm font-medium text-ink">Terminal activation</span>
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                syncState?.authenticated ? "bg-success/15 text-success" : "bg-muted/15 text-muted"
+                syncState?.activated ? "bg-success/15 text-success" : "bg-muted/15 text-muted"
               }`}
             >
-              {syncState?.authenticated ? "Connected" : "Not connected"}
+              {syncState?.activated ? "Activated" : "Not activated"}
             </span>
           </div>
 
@@ -59,16 +59,20 @@ export default function SettingsPage() {
             </dl>
           )}
 
-          {!syncState?.authenticated && (
-            <p className="text-xs text-muted">
-              Not connected yet — a super admin needs to log in once (Super Admin tab on the login screen) to
-              connect this terminal to Zupa.
-            </p>
-          )}
-
           <Button onClick={syncNow} loading={syncing} className="self-start">
             Sync now
           </Button>
+        </div>
+
+        <div className="flex items-center justify-between rounded-[var(--radius-panel)] border border-border bg-surface p-5">
+          <span className="text-sm font-medium text-ink">Super admin connection</span>
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              syncState?.authenticated ? "bg-success/15 text-success" : "bg-muted/15 text-muted"
+            }`}
+          >
+            {syncState?.authenticated ? "Connected" : "Not connected"}
+          </span>
         </div>
       </div>
     </div>

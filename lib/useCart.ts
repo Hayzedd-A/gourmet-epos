@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { productLabelFor } from "../shared/productLabel";
 import type { Product } from "../shared/types/domain";
 
 export interface CartLine {
@@ -21,7 +22,7 @@ export function useCart() {
           l.productId === product.id ? { ...l, quantity: l.quantity + 1 } : l,
         );
       }
-      return [...prev, { productId: product.id, name: product.name, unitPrice: product.unitPrice, quantity: 1 }];
+      return [...prev, { productId: product.id, name: productLabelFor(product), unitPrice: product.price, quantity: 1 }];
     });
   }
 
@@ -41,7 +42,15 @@ export function useCart() {
     setLines([]);
   }
 
+  // Replaces the cart wholesale — used to resume a held order. Loaded lines
+  // keep their original name/price snapshot (e.g. from a held order's saved
+  // items) rather than looking up the live product, same as `add` freezes a
+  // snapshot for a newly-added line.
+  function load(newLines: CartLine[]) {
+    setLines(newLines);
+  }
+
   const subtotal = useMemo(() => lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0), [lines]);
 
-  return { lines, add, setQuantity, remove, clear, subtotal };
+  return { lines, add, setQuantity, remove, clear, load, subtotal };
 }

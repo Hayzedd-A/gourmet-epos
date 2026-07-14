@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { IpcMain } from "electron";
-import { and, eq, gte, lte } from "drizzle-orm";
-import { assembleSale } from "../../db/sales";
+import { and, eq, gte, lte, notInArray } from "drizzle-orm";
+import { assembleSale, resolveLineItems } from "../../db/sales";
 import type { getDb } from "../../db/client";
-import { outbox, productCache, sale, saleItem } from "../../db/schema";
+import { outbox, paymentMethodCache, sale, saleItem } from "../../db/schema";
 import { getTerminalConfig } from "../../db/terminal";
 import { appState } from "../../state";
-import { canManageCatalog } from "../../../shared/permissions";
+import { canManageCatalog, canViewAllSales } from "../../../shared/permissions";
 import { IPC_CHANNELS } from "../../../shared/types/ipc";
 import type { Sale, SaleInput } from "../../../shared/types/domain";
+import { tryAutoMatchSale } from "./payments";
 
 function requireSession() {
   if (!appState.session) {
@@ -28,48 +29,44 @@ export function registerSalesHandlers(ipcMain: IpcMain, db: ReturnType<typeof ge
     }
 
     const config = getTerminalConfig(db);
-    const products = db.select().from(productCache).all();
-    const byId = new Map(products.map((p) => [p.id, p]));
+    if (!config.storeId) {
+      throw new Error("Terminal not activated");
+    }
 
-    const lineItems = input.items.map((item) => {
-      const product = byId.get(item.productId);
-      if (!product) {
-        throw new Error(`Unknown product ${item.productId}`);
-      }
-      if (item.quantity <= 0) {
-        throw new Error(`Invalid quantity for ${product.name}`);
-      }
-      return {
-        id: randomUUID(),
-        productId: product.id,
-        nameAtSale: product.name,
-        unitPriceAtSale: product.unitPrice,
-        quantity: item.quantity,
-        lineTotal: product.unitPrice * item.quantity,
-      };
-    });
+    const method = db
+      .select()
+      .from(paymentMethodCache)
+      .where(eq(paymentMethodCache.id, input.paymentMethodId))
+      .get();
+    if (!method) {
+      throw new Error("Unknown payment method");
+    }
 
+    const lineItems = resolveLineItems(db, input.items);
     const subtotal = lineItems.reduce((sum, li) => sum + li.lineTotal, 0);
     const total = Math.max(0, subtotal - input.discountValue);
-
-    if (input.paymentMethod === "cash" && (input.amountTendered ?? 0) < total) {
-      throw new Error("Amount tendered is less than the total due");
-    }
+    const now = Date.now();
 
     const saleRow = {
       id: randomUUID(),
       shiftId: input.shiftId,
       staffId: session.staffId,
-      branchId: config.branchId,
+      storeId: config.storeId,
       terminalId: config.terminalId,
       status: "completed" as const,
       subtotal,
       discountValue: input.discountValue,
       taxValue: 0,
       total,
-      paymentMethod: input.paymentMethod,
-      amountTendered: input.amountTendered,
-      soldAt: Date.now(),
+      paymentMethodId: method.id,
+      paymentMethodLabel: method.name,
+      transactionRef: null,
+      matchStatus: "unmatched" as const,
+      matchedAt: null,
+      openedAt: now,
+      updatedAt: now,
+      label: null,
+      soldAt: now,
       syncStatus: "pending" as const,
       serverOrderId: null,
       voidReason: null,
@@ -83,22 +80,42 @@ export function registerSalesHandlers(ipcMain: IpcMain, db: ReturnType<typeof ge
       tx.insert(outbox).values({ saleId: saleRow.id, attempts: 0, nextAttemptAt: 0, lastError: null }).run();
     });
 
+    // Fire-and-forget: try to claim a matching Squad receipt right away if
+    // we're online, without making checkout wait on the network. Anything
+    // not immediately/unambiguously matched is left for the Reconciliation
+    // page's end-of-day pass. See docs/ARCHITECTURE.md §8.
+    if (config.apiKey) {
+      void tryAutoMatchSale(db, config.apiKey, saleRow.id, saleRow.total, saleRow.soldAt, saleRow.paymentMethodId);
+    }
+
     return assembleSale(db, saleRow);
   });
 
   ipcMain.handle(
     IPC_CHANNELS.salesList,
-    (_event, params?: { from?: number; to?: number }): Sale[] => {
-      const conditions = [];
+    (_event, params?: { from?: number; to?: number; staffId?: string }): Sale[] => {
+      const session = requireSession();
+
+      // Held/discarded orders live in heldOrders.list — this only ever
+      // returns finalized sales (completed/voided), which always have a
+      // soldAt/paymentMethodId.
+      const conditions = [notInArray(sale.status, ["held", "discarded"])];
       if (params?.from) conditions.push(gte(sale.soldAt, params.from));
       if (params?.to) conditions.push(lte(sale.soldAt, params.to));
 
-      const rows = conditions.length
-        ? db.select().from(sale).where(and(...conditions)).all()
-        : db.select().from(sale).all();
+      // Staff only ever see their own sales — enforced here, not just
+      // hidden client-side, regardless of what (if anything) they pass as
+      // `staffId`. admin/super_admin can optionally filter by any staffId.
+      if (!canViewAllSales(session.accessRole)) {
+        conditions.push(eq(sale.staffId, session.staffId));
+      } else if (params?.staffId) {
+        conditions.push(eq(sale.staffId, params.staffId));
+      }
+
+      const rows = db.select().from(sale).where(and(...conditions)).all();
 
       return rows
-        .sort((a, b) => b.soldAt - a.soldAt)
+        .sort((a, b) => (b.soldAt ?? 0) - (a.soldAt ?? 0))
         .map((row) => assembleSale(db, row));
     },
   );

@@ -2,32 +2,30 @@
 
 import { useState } from "react";
 import { Button } from "../ui/Button";
+import { productLabelFor } from "../../shared/productLabel";
 import type { Product, ProductInput } from "../../shared/types/domain";
 
 interface ProductFormModalProps {
   product: Product | null;
-  sizeName: string;
   onClose: () => void;
   onSubmit: (input: ProductInput) => Promise<void>;
 }
 
-export function ProductFormModal({ product, sizeName, onClose, onSubmit }: ProductFormModalProps) {
+export function ProductFormModal({ product, onClose, onSubmit }: ProductFormModalProps) {
   // Mounted only while a product is selected, so `form` below always starts
-  // from the current variant's values — no reset effect needed.
+  // from the current product's values — no reset effect needed.
   if (!product) return null;
-  return <ProductFormDialog product={product} sizeName={sizeName} onClose={onClose} onSubmit={onSubmit} />;
+  return <ProductFormDialog product={product} onClose={onClose} onSubmit={onSubmit} />;
 }
 
 function ProductFormDialog({
   product,
-  sizeName,
   onClose,
   onSubmit,
 }: Omit<ProductFormModalProps, "product"> & { product: Product }) {
   const [form, setForm] = useState<ProductInput>({
-    unitPrice: product.unitPrice,
+    price: product.price,
     isAvailable: product.isAvailable,
-    quantity: product.quantity,
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,8 +50,8 @@ function ProductFormDialog({
     >
       <div className="flex flex-col gap-4 p-6">
         <div>
-          <h2 className="text-lg font-semibold">{product.name}</h2>
-          <p className="text-sm text-muted">{sizeName}</p>
+          <h2 className="text-lg font-semibold">{productLabelFor(product)}</h2>
+          <p className="text-sm text-muted">{product.category}</p>
         </div>
 
         <label className="flex flex-col gap-1.5 text-sm">
@@ -61,19 +59,8 @@ function ProductFormDialog({
           <input
             type="number"
             min={0}
-            value={form.unitPrice}
-            onChange={(e) => setForm((f) => ({ ...f, unitPrice: Number(e.target.value) }))}
-            className="font-figures h-11 rounded-[var(--radius-control)] border border-border bg-surface px-3 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-          />
-        </label>
-
-        <label className="flex flex-col gap-1.5 text-sm">
-          <span className="text-muted">Stock qty</span>
-          <input
-            type="number"
-            min={0}
-            value={form.quantity}
-            onChange={(e) => setForm((f) => ({ ...f, quantity: Number(e.target.value) }))}
+            value={form.price}
+            onChange={(e) => setForm((f) => ({ ...f, price: Number(e.target.value) }))}
             className="font-figures h-11 rounded-[var(--radius-control)] border border-border bg-surface px-3 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
           />
         </label>
