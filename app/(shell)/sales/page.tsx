@@ -37,6 +37,7 @@ export default function SalesPage() {
   const [staffNames, setStaffNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [reprintingId, setReprintingId] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [fromDate, setFromDate] = useState("");
@@ -126,6 +127,18 @@ export default function SalesPage() {
     }
   }
 
+  async function handleReprint(sale: Sale) {
+    setReprintingId(sale.id);
+    setError(null);
+    try {
+      await getApi().printer.printReceipt(sale.id);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setReprintingId(null);
+    }
+  }
+
   if (!session) {
     return null;
   }
@@ -176,17 +189,31 @@ export default function SalesPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {canVoid && sale.status === "completed" && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleVoid(sale);
-                        }}
-                        className="text-sm font-medium text-danger hover:underline"
-                      >
-                        Void
-                      </button>
-                    )}
+                    <div className="flex justify-end gap-3">
+                      {sale.status === "completed" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleReprint(sale);
+                          }}
+                          disabled={reprintingId === sale.id}
+                          className="text-sm font-medium text-ink hover:underline disabled:opacity-50"
+                        >
+                          {reprintingId === sale.id ? "Printing…" : "Reprint"}
+                        </button>
+                      )}
+                      {canVoid && sale.status === "completed" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleVoid(sale);
+                          }}
+                          className="text-sm font-medium text-danger hover:underline"
+                        >
+                          Void
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -319,6 +346,7 @@ export default function SalesPage() {
         sale={selectedSale}
         staffName={selectedSale ? staffNames[selectedSale.staffId] ?? "—" : ""}
         onClose={() => setSelectedSale(null)}
+        onReprint={handleReprint}
       />
     </div>
   );

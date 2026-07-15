@@ -50,6 +50,7 @@ CREATE TABLE `sale` (
 	`sold_at` integer,
 	`sync_status` text DEFAULT 'pending' NOT NULL,
 	`server_order_id` text,
+	`order_number` text,
 	`void_reason` text
 );
 --> statement-breakpoint
@@ -58,6 +59,7 @@ CREATE TABLE `sale_item` (
 	`sale_id` text NOT NULL,
 	`product_id` text NOT NULL,
 	`name_at_sale` text NOT NULL,
+	`description_at_sale` text,
 	`unit_price_at_sale` real NOT NULL,
 	`quantity` integer NOT NULL,
 	`line_total` real NOT NULL
@@ -91,5 +93,6 @@ CREATE TABLE `terminal_config` (
 	`api_key` text,
 	`store_id` text,
 	`jwt` text,
-	`theme` text DEFAULT 'light' NOT NULL
+	`theme` text DEFAULT 'light' NOT NULL,
+	`display_name` text
 );

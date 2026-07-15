@@ -87,9 +87,11 @@ This app now talks to a purpose-built Terminal API (`/terminal-api/*` in `zupa-a
 
 **Push (sales → Zupa), outbox pattern:**
 1. Checkout completes → row written to `sale`/`sale_item`, row enqueued in `outbox`. This step never touches the network.
-2. A background worker in the main process drains the outbox whenever the network is reachable (checked opportunistically + on OS online events), POSTing each sale to the new POS sales endpoint with its `clientReference`.
-3. Server dedupes on `{platform: "pos", platformOrderReference: clientReference}` — the same idempotency pattern already used by Zupa's Slack-order integration — so retries and double-sends are safe.
-4. Success → `sale.syncStatus = synced`, `serverOrderId` recorded, outbox row removed. Failure → left `pending`, retried with backoff; never blocks new sales.
+2. A background worker in the main process drains the outbox whenever the network is reachable (checked opportunistically + on OS online events), submitting each sale to `POST /terminal-api/order/submit` (`electron/zupa/client.ts#submitOrder`) with the sale's own `id` as `clientReference`.
+3. Server dedupes on `clientReference` alone (confirmed via source — **globally** unique, not scoped per terminal, unlike most of this app's other per-terminal assumptions; harmless since `clientReference` is a random UUID, but worth flagging to the API team) — resubmitting an already-submitted `clientReference` returns the existing order (200) instead of erroring, so retries and double-sends are safe. A `409` means two concurrent submissions raced at insert time; `submitOrder` retries the same request internally a few times rather than surfacing it, since the documented fix is simply to retry.
+4. Success → `sale.syncStatus = synced`, `serverOrderId`/`orderNumber` recorded (the latter is Zupa's human-friendly reference, e.g. "TRM-A4F9K2" — shown in `SaleDetailModal` once set), outbox row removed. Failure → left `pending`, retried with backoff; never blocks new sales.
+5. **Item mapping is not what the doc's wording implies.** `productId` is validated server-side against the `terminal_product` table specifically, not "any Zupa catalog product" — so only `csv_import`/`manual` sourced items (which carry a real `remoteId`) can be sent with `productId` set; `zupa_catalog` items (Zupa's own live store catalog, no `terminal_product` row) must go as ad-hoc items (`name`/`unitPrice`) instead, the **inverse** of what the doc's phrasing suggests. See `buildOrderItems` in `electron/sync/push.ts`.
+6. **`paymentConfirmed` reflects whatever `matchStatus` is at push time**, not necessarily its final state — if a sale pushes before it's matched (common: the outbox drains every 30s, the opportunistic post-checkout auto-match is usually faster, but isn't guaranteed) and gets reconciled only later (e.g. an end-of-day bulk pass), Zupa's copy of the order keeps `paymentConfirmed: false` forever, since resubmitting the same `clientReference` just returns the existing row unchanged — there's no documented way to update it after the fact. Known gap, not currently solved.
 
 **Pull (catalog ← Zupa's Terminal API), merge not replace:**
 1. No-ops entirely if the terminal isn't activated yet (`terminal_config.apiKey` null) — the scheduler still calls this unconditionally, there's just nothing to do before activation.
@@ -126,8 +128,8 @@ Three roles, two login paths, for the *person* using an already-activated termin
 
 Most of what this section used to list (branch/terminal entities, device auth, a unified product catalog) is now **built and confirmed live** as the Terminal API (§4.2/§6) — this section is much shorter than it used to be. Remaining gaps, to be scoped and reviewed as their own change in `zupa-api`:
 
-1. **POS sales endpoint** — still doesn't exist anywhere, under `/terminal-api` or otherwise. Needs to accept line items, payment method, discounts, totals, staff/shift attribution, and `clientReference`, deduping on `{platform: "pos", platformOrderReference}` per the existing Slack-integration pattern. Given everything else terminal-facing now lives under `/terminal-api` with `X-Terminal-Key` auth, that's the natural home for this too (e.g. `POST /terminal-api/sales`) rather than reviving the earlier `jwt`-based `/pos/:branchId/sales` idea — but nothing is confirmed, so `electron/zupa/client.ts#pushSale` still targets the old placeholder shape until a real endpoint is confirmed.
-2. **Refund/void** on that same (not-yet-existing) sales resource, for the admin section.
+1. **`POST /terminal-api/order/submit` needs to be committed.** Confirmed present and working against the local `zupa-api` dev checkout — models, migration (`db/sequelize/migrations/20260714100000-create-terminal-orders.js`), and the route itself (`src/modules/terminal/index.js:643`) — but, same situation as the payment-methods feature (item 6 below), entirely **uncommitted working-tree changes**, not on any branch. Needs a real commit/PR before any other environment has it; the DB migration likely hasn't even been run outside this one dev checkout. Also: its `clientReference` uniqueness constraint is global, not per-terminal (see §5) — worth raising with the API team even though it's harmless for us today.
+2. **Refund/void** — `PATCH /terminal-api/orders/:orderNumber` exists but is admin-only (no `terminalAuth`), so epos's own `sales:void` stays purely local-cache-only for now (it never writes through to Zupa) until/unless a terminal-facing refund path is added.
 3. *(Optional, not currently blocking)* An `updatedAt`-based incremental filter on `GET /terminal-api/products/:prodType`, if a full catalog fetch on every pull ever stops being cheap enough (~660+ products today, confirmed fine).
 4. A real create/update/delete endpoint for individual products under `/terminal-api`, if admin catalog management should ever write through from epos instead of staying local-cache-only — today that's ZupaFE's job (its catalog-admin tab already does this for the terminal-sourced catalog).
 5. *(Not epos's to fix, flagging only)* The Terminal API's admin endpoints (`terminals` register/list/update/rotate-key, `catalog` add/update, `payment-methods` create/update/assign) have no auth middleware at all today.
@@ -185,11 +187,51 @@ Most of what this section used to list (branch/terminal entities, device auth, a
 
 USB-attached ESC/POS thermal printer per terminal. No cash drawer — no cash is accepted (card/transfer only), so there's nothing to store in a till and nothing to kick open. Driven from the Electron main process — the renderer only ever calls `printReceipt(sale)` over IPC and has no direct device access. No network printer discovery is needed since each printer is wired to its own terminal.
 
+**Auto-print, always best-effort.** `app/(shell)/pos/page.tsx#handleConfirmSale` fires `printer.printReceipt(saleResult.id)` right after both a direct sale and a held-order finalize, fire-and-forget (`.catch(() => {})`) — printing never blocks or fails a sale. `sales:void`-adjacent, the Sales page also has a **Reprint** action per completed sale (row button + inside `SaleDetailModal`) that calls the same `printReceipt` — reprinting just rebuilds the receipt from the stored sale/items, there's no separate "reprint" code path.
+
+**Printer selection is a Settings picker, not an environment variable** — the first version of this feature configured the printer purely via `RECEIPT_PRINTER_DEVICE`/`RECEIPT_PRINTER_NAME` env vars, which turned out to be a real deployment blocker: there's no practical way for a till operator to set an environment variable before double-clicking a desktop shortcut, so on real hardware the printer just silently showed "not configured" — no error, nothing printed, because the env var was (and could never realistically be) set. Fixed by using Electron's own `webContents.getPrintersAsync()` (`electron/hardware/printer.ts#listPrinters`, no extra dependency, works on both Windows' print spooler and Linux's CUPS) to enumerate printers the OS already knows about, letting Settings show a dropdown to pick one. The choice is persisted in `terminal_config.printerName` and is the **primary** configuration path on every platform now; the env vars still work but only as a local-dev fallback when nothing's been selected in Settings.
+
+**Cross-platform printing itself (`electron/hardware/printer.ts`)** still needs genuinely different mechanisms per OS — no raw device-path concept exists on Windows:
+- **Windows**: raw ESC/POS bytes have to go through the print spooler's `WritePrinter` with a `RAW` datatype — normal GDI-based printing paths (`Out-Printer`, .NET `PrintDocument`) re-encode data instead of passing it through untouched. Implemented as the well-known "RawPrinterHelper" P/Invoke pattern (`OpenPrinter`/`StartDocPrinter`/`WritePrinter` from `winspool.drv`), embedded as inline C# compiled on the fly by PowerShell's own `Add-Type` and invoked via `execFile("powershell.exe", ...)` — every Windows install already has both, so this needs **zero extra native Node dependencies** (no native-module cross-compile risk, unlike `better-sqlite3`).
+- **Linux/macOS**: a Settings-selected printer prints via CUPS (`lp -d <name> -o raw`, same "pass raw bytes through untouched" reasoning as Windows' RAW datatype); `RECEIPT_PRINTER_DEVICE` (e.g. `/dev/usb/lp0`, plain `writeFileSync` to the USB printer-class character device) is the fallback when no printer is selected, for setups without CUPS.
+- **Paper is 80mm** (confirmed against real hardware) — `LINE_WIDTH` (`electron/hardware/receipt.ts`) is 48 characters, the standard column count for an 80mm printer's default font at its ~576-dot printable width (`PAPER_WIDTH_DOTS`). It was originally 32 (a 58mm-paper column count), which only used about 60% of the roll's width — a real issue reported from the first physical test print.
+- **The ₦ (naira) glyph doesn't print** — confirmed on real hardware, and the failure mode was worse than a garbled character: `line()` sends text as raw ASCII bytes (`Buffer.from(text, "ascii")`), which truncates ₦ (U+20A6) to a single byte, `0xA6`. This printer's default codepage reads bytes ≥ 0x80 as the *first half* of a two-byte character, which swallowed the digit immediately after the symbol too (e.g. "₦4,000.00" printed as ",000.00"). Fixed by never sending that byte at all — `money()` prints a plain ASCII `"N"` prefix instead (`"N4,000.00"`), which works on any printer regardless of codepage. Recovering the actual ₦ glyph would need finding the right `ESC t n` codepage-select value for this specific printer by trial and error against physical hardware; not pursued since "N" is unambiguous and safe everywhere.
+- **Verify with Settings' Test print button** before relying on this for real service, especially the Windows path (driver actually behaves as RAW-passthrough for the selected queue).
+
+**Receipt content** (`electron/hardware/receipt.ts#buildReceiptBuffer`) is modeled on this brand's actual paper receipt: logo image, store name (`STORE_NAME`, hardcoded — there's only one store/wordmark today, printed at double width+height via `GS !` so it stands out) + address/phone/email (**configurable**, see below), "Receipt of Purchase (Inc Tax)" + date (hand-formatted `DD/MM/YYYY HH:MM:SS`, not `toLocaleString`, so it's identical regardless of the till's OS/ICU locale data), staff name, till name (`terminal_config.displayName`, editable in Settings, falls back to "Till" if unset), an itemized **Product/Price/Qty/Total table** (see below), total quantity, subtotal/discount/total (total printed at double width+height to match the physical receipt's noticeably larger total), a "PAYMENT BY \<method\>" section (e.g. "PAYMENT BY MONIEPOINT 1" — the actual `paymentMethodLabel`, not a generic "TENDER"), and a CODE128 barcode of the receipt reference.
+
+**Item table** (`tableRow`/`PRODUCT_COL`/`PRICE_COL`/`QTY_COL`/`TOTAL_COL`) prints a `PRODUCT | PRICE | QTY | TOTAL` header, then one row per item with `nameAtSale` and `descriptionAtSale` combined into a single wrapped block in the Product column (e.g. "Banana Bread Loaf: Classic, moist banana bread..."), matching the reference receipt's layout — Price/Qty/Total (unit price / quantity / line total) only appear once, alongside the product name's first wrapped line; any further wrapped lines are plain text. Column widths sum to exactly `LINE_WIDTH` (48).
+
+**Dividers are a solid raster line, not repeated dashes** — `divider()` prints a `GS v 0` raster image (a few dots tall, every bit set) spanning the full `PAPER_WIDTH_DOTS`, rather than a repeated `-` character. The dash approach looked broken/dotted on real hardware because the gaps between glyphs are font-dependent and not controllable; a solid raster bar is guaranteed continuous regardless of font.
+
+**Logo image** (`electron/hardware/logo.ts`) is printed via `GS v 0`, ESC/POS's raster bit image command — a 1-bit (monochrome) bitmap, 192px wide, sent as `widthBytes`/`height` header + packed MSB-first bits. It's composited as a **badge**: a black 192×192 square, a white circle (radius 80, centered) so the circle reads clearly against the black background — this was a specific ask after the first physical test print showed the logo without that framing — and the wordmark (flattened onto white, resized to 128px wide, grayscale, thresholded at 128) centered inside the circle, then the whole composed image re-thresholded and packed. The bitmap itself is **precomputed once, at dev time, and baked into the source as a base64 constant** — not processed at runtime — specifically to avoid adding an image-processing library (`sharp`) as a runtime dependency: `sharp` is a native/prebuilt module, the same cross-compile-risk class as `better-sqlite3` (§10b), and this app already went through one incident from a contaminated native-module build. `sharp` stays a transitive dependency, invoked only by a one-off local conversion script when the logo needs to change, never bundled into the packaged app. `logo.ts` also exports a PNG re-encoding of the same bitmap (`LOGO_PREVIEW_PNG_BASE64`) purely for Settings' receipt preview `<img>` — the renderer has no decoder for raw ESC/POS raster data.
+
+**Barcode** (`GS k`, `electron/hardware/receipt.ts#barcode`) prints the receipt reference (`REC` + 12 hex chars of the sale id) as CODE128, using the printer's **own** built-in symbology encoder rather than hand-rolling CODE128's symbol table/checksum ourselves — a real source of incompatibility across clone thermal printers. The command's data is prefixed with `{B`, which tells the printer's encoder to use CODE128 Code Set B (mapping directly to ASCII 32-127, which is exactly what the receipt reference is made of) — so the only "encoding" this app does is that two-byte prefix; the length-prefixed command form (`m = 73`) needs no NUL terminator, unlike CODE128's legacy `GS k` variants. `GS H 2` prints the human-readable text below the bars (so the reference isn't also printed as a separate plain-text line); `GS h`/`GS w` set bar height/module width — module width is deliberately kept at 2 (not 3), since this barcode's length (15 CODE128-B characters → 200 modules) would be 600 dots at width 3, over the 576-dot paper width and at real risk of clipping.
+
+**Store info is configurable** (Settings > Store info → `terminal_config.storeAddress`/`storePhone`/`storeEmail`, any logged-in role may set it, same as till name) — replacing what used to be hardcoded constants. `storeAddress` may be multiple lines (newline-separated, rendered as one `<textarea>` field in Settings). Migration `0002_slimy_thunderbolt.sql` seeds these columns from the previous hardcoded values on upgrade, so an existing install's printed receipts don't change (or go blank) the moment the migration runs.
+
+**Receipt preview** (Settings > Receipt preview, `components/settings/ReceiptPreview.tsx`) renders an HTML approximation of the printed receipt — logo `<img>`, live store-info fields, the same Product/Price/Qty/Total table, and a barcode — so layout can be sanity-checked without a physical printer (a real pain point during hardware testing, since printing a receipt to check every tweak is slow). The barcode there is drawn independently via `jsbarcode` (a small, dependency-free, pure-JS library — added only to the Next.js renderer bundle, so it carries none of the native-module cross-compile risk `sharp`/`better-sqlite3` do) rather than by parsing the actual ESC/POS bytes, so treat its exact bar widths as illustrative of "a CODE128 barcode encoding this text", not a byte-for-byte reproduction of what the printer's own encoder will draw.
+
+**Verification status**: the first physical test print (logo, barcode, store info, on real 80mm hardware) surfaced the paper-width, ₦-glyph, divider, and logo-framing issues documented above — all fixed in response, but **not yet reprinted/reverified against that hardware** as of this writing. Re-run Settings' **Test print** after any further change here before relying on it for real service.
+
 ## 10a. Native menu & theme
 
 `electron/menu.ts` builds a real application menu (File/Edit/View/Window; macOS also gets an app menu) via `Menu.setApplicationMenu` — Electron's bare default menu is otherwise all you get. The View menu's theme switcher (Light/Dark radio items) is the only way to change theme; there is no in-app UI control for it.
 
 Theme is **not** driven by the OS's `prefers-color-scheme` — it's an explicit choice, persisted in `terminal_config.theme` (default `light`), applied via `:root[data-theme="dark"]` in `app/globals.css`. Flow: menu click → `electron/menu.ts` persists the choice and rebuilds the menu (so the radio state stays correct) → `webContents.send("theme:changed", theme)` updates the live window. On load, `electron/preload.ts` reads the persisted theme synchronously (`ipcRenderer.sendSync("theme:getSync")`, backed by a synchronous `ipcMain.on` handler registered in `main.ts`) and stamps `data-theme` on `<html>` before the page's own scripts run — no flash of the wrong theme, no renderer-side theme code needed at all.
+
+## 10b. Packaging for Windows (cross-build from Linux)
+
+**`npm run build:win` runs `scripts/build-win.mjs`, not a plain `electron-builder --win` — this matters, and has already caused a real (twice) shipped-broken-app incident.** Cross-compiling `better-sqlite3` (a native module) for Windows from this Linux dev machine isn't automatic: `@electron/rebuild` refuses to cross-compile from source at all (node-gyp doesn't support it), so a bare `electron-builder --win` just packages whatever's currently sitting in `node_modules/better-sqlite3` — which on this machine is normally the **Linux** build, since that's what local dev/testing needs. The packaged "Windows" app then ships an ELF shared object where Windows expects a PE DLL; the native module fails to load, and the whole app crashes at startup with **zero error shown** (no window, no dialog — just a flash and nothing), which is exactly what happened both times before this was scripted.
+
+`scripts/build-win.mjs` fixes this by being self-sufficient:
+1. Builds the Next export and Electron bundle as normal.
+2. Stages the real Windows x64 prebuilt `better-sqlite3` binary via `prebuild-install` (`--platform=win32 --arch=x64 --runtime=electron --target=<electron version from node_modules/electron/package.json>`), fetched from `better-sqlite3`'s own GitHub releases — no compilation involved, so no cross-compile toolchain needed.
+3. **Verifies** the staged file is actually a `PE32` binary (via `file`) before proceeding — fails loudly rather than silently packaging the wrong thing again.
+4. Runs `electron-builder --win --x64` (`"npmRebuild": false` in `package.json`'s `build` config so electron-builder doesn't try to "fix" the staged binary itself and fail/overwrite it).
+5. **Always** restores the local machine's own Electron ABI build afterward (`electron-rebuild -f -w better-sqlite3`) in a `finally` block, so a Windows build never leaves this dev machine's own `npm run dev` broken — regardless of whether packaging succeeded.
+
+**Electron is pinned to `^42.6.1`, not the latest 43.x**, for a related reason: `better-sqlite3`'s latest release (`12.11.1`) only publishes prebuilt binaries through Electron ABI 146 (Electron 42.x); Electron 43 uses ABI 148, which has no published Windows prebuild yet, and cross-compiling in from source isn't an option (see above). Revisit this pin once `better-sqlite3` catches up.
 
 ## 11. Repo layout
 
@@ -200,8 +242,9 @@ electron/
                  assembleSale — shared by sales.ts and heldOrders.ts, see §9)
   sync/         pull.ts, push.ts, outbox worker
   hardware/     printer.ts, receipt.ts
-  zupa/         client.ts (zupaFetch = jwt auth, terminalFetch = X-Terminal-Key auth;
-                 payment search/match/options fetchers — see §8)
+  zupa/         client.ts (terminalFetch = X-Terminal-Key auth, used by every outbound
+                 call today; submitOrder — see §5 — payment search/match/options
+                 fetchers — see §8)
   ipc/handlers/ terminal.ts (activation), auth.ts, catalog.ts, sales.ts (direct checkout),
                  heldOrders.ts (list/hold/discard/finalize — see §9), staff.ts, shifts.ts,
                  sync.ts, printer.ts, payments.ts (search/match/reconcileAll, tryAutoMatchSale)
@@ -216,12 +259,15 @@ app/
                   hidden in this version (hardcoded to terminal products), see §5
     products/     catalog price/availability edits (admin, super_admin)
     sales/        sales history — own sales only for staff, all for admin/super_admin (see
-                  §9a); void (admin, super_admin); completed/voided only, held/discarded
-                  orders live in the POS page's Held Orders panel; date/staff filters,
-                  all-sales vs group-by-shift view, click a row for SaleDetailModal
+                  §9a); void (admin, super_admin); Reprint (all roles, completed sales only);
+                  completed/voided only, held/discarded orders live in the POS page's Held
+                  Orders panel; date/staff filters, all-sales vs group-by-shift view, click
+                  a row for SaleDetailModal
     reconciliation/ unmatched-sale receipt matching, manual + bulk (admin, super_admin) — see §8
     staff/        local staff/admin PIN roster (super_admin only)
-    settings/     terminal activation + sync status + manual trigger (all roles)
+    settings/     terminal activation + sync status + manual trigger + store info (address/
+                  phone/email)/receipt printer picker (list/select/save)/till name/test print/
+                  receipt preview (all roles) — see §10
 lib/ipc/        typed wrappers around window.api.*
 lib/useCart.ts  local cart state; `load()` replaces it wholesale to resume a held order
 shared/types/   types shared between main & renderer (Sale, Product, TerminalStatus, ...)
@@ -231,6 +277,10 @@ shared/productLabel.ts  name + variantDescription → display label (e.g. "Banan
 shared/productSearch.ts  word-initial subsequence match — "ba in ba co" finds "Baileys Infused
                          Banana x Coconut Bread"; searches the full display label, overrides
                          the category pill filter while active (searches the whole tab)
+scripts/
+  reset-db.mjs    wipes this terminal's local db (fresh migrations + reseed on next launch)
+  build-win.mjs   self-verifying Windows packaging — see §10b, don't bypass with a bare
+                  `electron-builder --win`
 ```
 
 ## 12. Explicit non-goals (v1)

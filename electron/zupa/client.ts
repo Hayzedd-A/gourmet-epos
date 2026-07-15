@@ -1,10 +1,5 @@
 import { zupaConfig } from "./config";
-import type {
-  PaymentMethodOption,
-  PaymentReceiptCandidate,
-  ProductSource,
-  Sale,
-} from "../../shared/types/domain";
+import type { PaymentMethodOption, PaymentReceiptCandidate, ProductSource } from "../../shared/types/domain";
 
 export class ZupaApiError extends Error {}
 
@@ -13,47 +8,11 @@ export class ZupaApiError extends Error {}
 // failure. Callers should treat it the same as success.
 export class PaymentAlreadyMatchedError extends ZupaApiError {}
 
-async function zupaFetch<T>(
-  path: string,
-  jwt: string | null,
-  init?: RequestInit,
-): Promise<T> {
-  if (!jwt) {
-    throw new ZupaApiError(
-      "Not authenticated with Zupa API — reconnect admin required",
-    );
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${zupaConfig.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${jwt}`,
-        ...init?.headers,
-      },
-    });
-  } catch (cause) {
-    throw new ZupaApiError(
-      `Could not reach Zupa API: ${(cause as Error).message}`,
-    );
-  }
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new ZupaApiError(
-      `Zupa API ${response.status} on ${path}: ${body.slice(0, 300)}`,
-    );
-  }
-
-  return response.json() as Promise<T>;
-}
-
 /**
  * Calls requiring the terminal's own device identity (X-Terminal-Key), not
- * a person's JWT. See docs/ARCHITECTURE.md §6 — this is a separate auth
- * track from `zupaFetch` above.
+ * a person's JWT. See docs/ARCHITECTURE.md §6 — a person's `jwt` (set by
+ * `auth:loginSuperAdmin`) isn't used for any outbound Zupa call today; it
+ * only proves this person holds real Zupa admin credentials, nothing more.
  */
 async function terminalFetch<T>(path: string, apiKey: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -305,39 +264,95 @@ export async function fetchPaymentMethods(apiKey: string): Promise<PaymentMethod
   return paymentMethods.map((m) => ({ id: m.id, name: m.name, type: m.type, isActive: true }));
 }
 
+export interface OrderSubmitItem {
+  // Present only for a terminal-catalog product (source csv_import/manual —
+  // see submitOrderInputFor in electron/sync/push.ts for why zupa_catalog
+  // items never set this). Omitted (with name+unitPrice instead) for an
+  // ad-hoc line — the server looks up price itself when productId is set,
+  // so unitPrice/name are never sent alongside it.
+  productId?: string;
+  name?: string;
+  unitPrice?: number;
+  quantity: number;
+}
+
+export interface OrderSubmitInput {
+  items: OrderSubmitItem[];
+  paymentMethodId?: string;
+  transactionRef?: string;
+  paymentConfirmed?: boolean;
+  clientReference: string;
+}
+
+export interface OrderSubmitResponseItem {
+  productId: string | null;
+  name: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+}
+
+export interface OrderSubmitResponse {
+  id: string;
+  orderNumber: string;
+  terminalId: string;
+  storeId: string;
+  status: string;
+  paymentConfirmed: boolean;
+  subtotal: number;
+  total: number;
+  itemCount: number;
+  items: OrderSubmitResponseItem[];
+}
+
 /**
- * NOT YET IMPLEMENTED server-side — tracked in docs/ARCHITECTURE.md §7.3.
- * Dedupe on `{ platform: "pos", platformOrderReference: sale.id }`, mirroring
- * the existing Slack-order idempotency pattern, once this endpoint exists.
- * Likely candidate for moving under /terminal-api with X-Terminal-Key auth
- * once built, matching the products endpoint — not assumed here since no
- * such endpoint is confirmed yet. Only ever called for a finalized sale (via
- * the outbox, which a held order is never enqueued into until it's
- * completed) — `soldAt`/`paymentMethodId`/`paymentMethodLabel` are
- * guaranteed set by then.
+ * `POST /terminal-api/order/submit` — confirmed present in zupa-api source
+ * (src/modules/terminal/index.js:643, terminalAuth-gated like every other
+ * terminal-facing endpoint), but as **uncommitted working-tree changes
+ * only** (models, migration, and the route itself are all uncommitted) —
+ * same situation as the payment-methods feature. See docs/ARCHITECTURE.md §7.3.
+ *
+ * Idempotent on `clientReference` (we pass `sale.id`): resubmitting the same
+ * reference returns the existing order (200) rather than erroring. Confirmed
+ * via source: the uniqueness constraint is **global** on `clientReference`
+ * alone, not scoped per terminal — a discrepancy worth flagging to the API
+ * team, though harmless here since `sale.id` is a random UUID. A 409 means
+ * two concurrent submissions raced at insert time; the documented fix is to
+ * retry the same request once the race resolves, which this does internally
+ * (a few short retries) rather than surfacing 409 to the caller.
  */
-export function pushSale(jwt: string | null, storeId: string, saleData: Sale) {
-  return zupaFetch<{ id: string }>(`/pos/${storeId}/sales`, jwt, {
-    method: "POST",
-    body: JSON.stringify({
-      platform: "pos",
-      platformOrderReference: saleData.id,
-      terminalId: saleData.terminalId,
-      staffId: saleData.staffId,
-      shiftId: saleData.shiftId,
-      items: saleData.items.map((item) => ({
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPrice: item.unitPriceAtSale,
-      })),
-      subtotal: saleData.subtotal,
-      discountValue: saleData.discountValue,
-      taxValue: saleData.taxValue,
-      total: saleData.total,
-      paymentMethodId: saleData.paymentMethodId,
-      paymentMethod: saleData.paymentMethodLabel,
-      transactionRef: saleData.transactionRef,
-      soldAt: new Date(saleData.soldAt!).toISOString(),
-    }),
-  });
+export async function submitOrder(apiKey: string, input: OrderSubmitInput): Promise<OrderSubmitResponse> {
+  const MAX_ATTEMPTS = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(`${zupaConfig.baseUrl}/terminal-api/order/submit`, {
+        method: "POST",
+        headers: { "x-terminal-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+    } catch (cause) {
+      throw new ZupaApiError(`Could not reach Zupa API: ${(cause as Error).message}`);
+    }
+
+    if (response.status === 409) {
+      lastError = new ZupaApiError("clientReference race on /terminal-api/order/submit — retrying");
+      await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+      continue;
+    }
+    if (response.status === 401) {
+      throw new ZupaApiError("Invalid or inactive terminal API key");
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new ZupaApiError(
+        `Zupa API ${response.status} on /terminal-api/order/submit: ${body.slice(0, 300)}`,
+      );
+    }
+    return response.json() as Promise<OrderSubmitResponse>;
+  }
+
+  throw lastError instanceof Error ? lastError : new ZupaApiError("Order submission failed after retries");
 }

@@ -21,6 +21,8 @@ const api: Api = {
   terminal: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.terminalGetStatus),
     activate: (apiKey) => ipcRenderer.invoke(IPC_CHANNELS.terminalActivate, apiKey),
+    updateDisplayName: (displayName) => ipcRenderer.invoke(IPC_CHANNELS.terminalUpdateDisplayName, displayName),
+    updateStoreInfo: (input) => ipcRenderer.invoke(IPC_CHANNELS.terminalUpdateStoreInfo, input),
   },
   auth: {
     loginPin: (pin) => ipcRenderer.invoke(IPC_CHANNELS.authLoginPin, pin),
@@ -61,6 +63,11 @@ const api: Api = {
   },
   printer: {
     printReceipt: (saleId) => ipcRenderer.invoke(IPC_CHANNELS.printerPrintReceipt, saleId),
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.printerGetStatus),
+    testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.printerTestPrint),
+    listPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.printerListPrinters),
+    setPrinterName: (name) => ipcRenderer.invoke(IPC_CHANNELS.printerSetPrinterName, name),
+    getReceiptPreviewAssets: () => ipcRenderer.invoke(IPC_CHANNELS.printerGetReceiptPreviewAssets),
   },
   staff: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.staffList),

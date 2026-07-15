@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8607d2a2-fb63-4d83-ad98-d83b05aba26d",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "28dbebce-7683-4dad-abb9-8b69fbb3e16c",
+  "prevId": "8607d2a2-fb63-4d83-ad98-d83b05aba26d",
   "tables": {
     "outbox": {
       "name": "outbox",
@@ -598,6 +598,13 @@
         },
         "display_name": {
           "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "printer_name": {
+          "name": "printer_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

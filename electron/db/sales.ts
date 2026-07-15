@@ -9,6 +9,7 @@ export interface ResolvedLineItem {
   id: string;
   productId: string;
   nameAtSale: string;
+  descriptionAtSale: string | null;
   unitPriceAtSale: number;
   quantity: number;
   lineTotal: number;
@@ -44,6 +45,7 @@ export function resolveLineItems(db: DbOrTx, items: SaleItemInput[]): ResolvedLi
       id: randomUUID(),
       productId: product.id,
       nameAtSale: productLabelFor(product),
+      descriptionAtSale: product.description,
       unitPriceAtSale: product.price,
       quantity: item.quantity,
       lineTotal: product.price * item.quantity,
@@ -86,6 +88,7 @@ export function assembleSale(
     soldAt: row.soldAt,
     syncStatus: row.syncStatus,
     serverOrderId: row.serverOrderId,
+    orderNumber: row.orderNumber,
     voidReason: row.voidReason,
     items,
   };

@@ -21,6 +21,27 @@ export const terminalConfig = sqliteTable("terminal_config", {
   // Set via the native View menu (electron/menu.ts), not the OS's
   // prefers-color-scheme — light is the default regardless of OS setting.
   theme: text("theme", { enum: ["light", "dark"] }).notNull().default("light"),
+  // Friendly label for this physical till (e.g. "Till 1"), set in Settings.
+  // Printed on receipts as "Device" — falls back to a generic label if unset
+  // (see electron/hardware/receipt.ts). Purely local/cosmetic, never synced.
+  displayName: text("display_name"),
+  // The OS-level printer name (Electron's `PrinterInfo.name`, from
+  // `webContents.getPrintersAsync()`) the user picked in Settings — e.g.
+  // "EPSON TM-T88 Receipt" on Windows, a CUPS queue name on Linux. This is
+  // the primary way the receipt printer gets configured now; an env var
+  // (RECEIPT_PRINTER_NAME/RECEIPT_PRINTER_DEVICE) is only a fallback for
+  // local dev, since there's no practical way for a real till operator to
+  // set an environment variable before double-clicking a desktop shortcut.
+  // See electron/hardware/printer.ts and docs/ARCHITECTURE.md §10.
+  printerName: text("printer_name"),
+  // Store details printed on the receipt just after the store name —
+  // editable in Settings, replacing what used to be hardcoded in
+  // electron/hardware/receipt.ts. `storeAddress` may be multiple lines
+  // (split on "\n" for printing); phone/email are single lines. All three
+  // fall back to a generic placeholder line if unset (see receipt.ts).
+  storeAddress: text("store_address"),
+  storePhone: text("store_phone"),
+  storeEmail: text("store_email"),
 });
 
 // Local roster: staff/admin PIN accounts (created by a super admin, see
@@ -141,6 +162,11 @@ export const sale = sqliteTable("sale", {
     .notNull()
     .default("pending"),
   serverOrderId: text("server_order_id"),
+  // Human-friendly order reference from POST /terminal-api/order/submit
+  // (e.g. "TRM-A4F9K2") — distinct from serverOrderId (that endpoint's own
+  // uuid). Set alongside serverOrderId once the push succeeds. See
+  // docs/ARCHITECTURE.md §7.3.
+  orderNumber: text("order_number"),
   voidReason: text("void_reason"),
 });
 
@@ -149,6 +175,11 @@ export const saleItem = sqliteTable("sale_item", {
   saleId: text("sale_id").notNull(),
   productId: text("product_id").notNull(),
   nameAtSale: text("name_at_sale").notNull(),
+  // Snapshot of the product's marketing description at sale time (like
+  // nameAtSale/unitPriceAtSale) — printed on the receipt under the item
+  // name, matching the physical receipt format. Null if the product had no
+  // description.
+  descriptionAtSale: text("description_at_sale"),
   unitPriceAtSale: real("unit_price_at_sale").notNull(),
   quantity: integer("quantity").notNull(),
   lineTotal: real("line_total").notNull(),

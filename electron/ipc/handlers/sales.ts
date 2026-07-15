@@ -69,6 +69,7 @@ export function registerSalesHandlers(ipcMain: IpcMain, db: ReturnType<typeof ge
       soldAt: now,
       syncStatus: "pending" as const,
       serverOrderId: null,
+      orderNumber: null,
       voidReason: null,
     };
 

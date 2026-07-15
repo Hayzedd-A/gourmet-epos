@@ -26,6 +26,11 @@ export function seed(db: ReturnType<typeof getDb>) {
       storeId: null,
       jwt: null,
       theme: "light",
+      displayName: null,
+      printerName: null,
+      storeAddress: "19B Fola Osibo, Lekki 1\nLagos\n10001",
+      storePhone: "0701 824 9203",
+      storeEmail: "hello@gourmettwist.ng",
     };
     db.insert(terminalConfig).values(config).run();
   }

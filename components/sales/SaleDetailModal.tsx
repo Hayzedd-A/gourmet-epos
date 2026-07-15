@@ -1,24 +1,39 @@
 "use client";
 
+import { useState } from "react";
 import { formatDateTime, formatNaira } from "../../lib/format";
 import type { Sale } from "../../shared/types/domain";
+import { Button } from "../ui/Button";
 
 interface SaleDetailModalProps {
   sale: Sale | null;
   staffName: string;
   onClose: () => void;
+  onReprint: (sale: Sale) => Promise<void>;
 }
 
-export function SaleDetailModal({ sale, staffName, onClose }: SaleDetailModalProps) {
+export function SaleDetailModal({ sale, staffName, onClose, onReprint }: SaleDetailModalProps) {
   if (!sale) return null;
-  return <SaleDetailDialog sale={sale} staffName={staffName} onClose={onClose} />;
+  return <SaleDetailDialog sale={sale} staffName={staffName} onClose={onClose} onReprint={onReprint} />;
 }
 
 function SaleDetailDialog({
   sale,
   staffName,
   onClose,
+  onReprint,
 }: Omit<SaleDetailModalProps, "sale"> & { sale: Sale }) {
+  const [reprinting, setReprinting] = useState(false);
+
+  async function handleReprint() {
+    setReprinting(true);
+    try {
+      await onReprint(sale);
+    } finally {
+      setReprinting(false);
+    }
+  }
+
   return (
     <dialog
       ref={(node) => node?.showModal()}
@@ -31,6 +46,7 @@ function SaleDetailDialog({
             <h2 className="text-lg font-semibold">Sale details</h2>
             <p className="text-sm text-muted">
               {sale.soldAt ? formatDateTime(sale.soldAt) : "—"} · {staffName}
+              {sale.orderNumber ? ` · Order ${sale.orderNumber}` : ""}
             </p>
           </div>
           <button onClick={onClose} className="text-sm text-muted hover:text-ink">
@@ -64,7 +80,12 @@ function SaleDetailDialog({
             <tbody className="divide-y divide-border">
               {sale.items.map((item) => (
                 <tr key={item.id}>
-                  <td className="py-2 text-ink">{item.nameAtSale}</td>
+                  <td className="py-2 text-ink">
+                    {item.nameAtSale}
+                    {item.descriptionAtSale && (
+                      <p className="text-xs font-normal text-muted">{item.descriptionAtSale}</p>
+                    )}
+                  </td>
                   <td className="font-figures py-2 text-right text-muted">{item.quantity}</td>
                   <td className="font-figures py-2 text-right text-muted">{formatNaira(item.unitPriceAtSale)}</td>
                   <td className="font-figures py-2 text-right text-ink">{formatNaira(item.lineTotal)}</td>
@@ -125,6 +146,12 @@ function SaleDetailDialog({
             </>
           )}
         </div>
+
+        {sale.status === "completed" && (
+          <Button variant="secondary" loading={reprinting} onClick={() => void handleReprint()}>
+            Reprint receipt
+          </Button>
+        )}
       </div>
     </dialog>
   );

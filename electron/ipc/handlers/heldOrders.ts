@@ -92,6 +92,7 @@ export function registerHeldOrdersHandlers(ipcMain: IpcMain, db: ReturnType<type
       soldAt: null,
       syncStatus: "pending" as const,
       serverOrderId: null,
+      orderNumber: null,
       voidReason: null,
     };
 

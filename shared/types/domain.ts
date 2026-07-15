@@ -72,6 +72,16 @@ export interface Session {
 export interface TerminalStatus {
   activated: boolean;
   storeId: string | null;
+  // Friendly till label (e.g. "Till 1"), editable in Settings — printed on
+  // receipts as "Device". Null until someone sets one.
+  displayName: string | null;
+  // Store details printed on the receipt just after the store name —
+  // editable in Settings > Store info. `storeAddress` may be multi-line
+  // (newline-separated). Null until set (should only happen pre-migration —
+  // see electron/db/migrations/0002_slimy_thunderbolt.sql).
+  storeAddress: string | null;
+  storePhone: string | null;
+  storeEmail: string | null;
 }
 
 // A staff/admin/super_admin roster row, as shown on the Staff management
@@ -167,6 +177,7 @@ export interface SaleItem {
   saleId: string;
   productId: string;
   nameAtSale: string;
+  descriptionAtSale: string | null;
   unitPriceAtSale: number;
   quantity: number;
   lineTotal: number;
@@ -196,6 +207,9 @@ export interface Sale {
   soldAt: number | null;
   syncStatus: SyncStatus;
   serverOrderId: string | null;
+  // Human-friendly order reference (e.g. "TRM-A4F9K2") from Zupa's order
+  // submission response — distinct from serverOrderId (its own uuid).
+  orderNumber: string | null;
   voidReason: string | null;
   items: SaleItem[];
 }
@@ -210,4 +224,44 @@ export interface SyncState {
   // Super admin has connected via Zupa login (has a jwt) — unrelated to
   // catalog sync, kept for whatever still needs a person-level credential.
   authenticated: boolean;
+}
+
+// What this terminal will actually try to print to — see
+// electron/hardware/printer.ts. `target` is normally the OS printer name
+// picked in Settings (`terminal_config.printerName`, from `listPrinters`);
+// an env var (RECEIPT_PRINTER_NAME/RECEIPT_PRINTER_DEVICE) is only a
+// fallback for local dev. null (and `configured: false`) if neither is set.
+export interface PrinterStatus {
+  platform: string;
+  configured: boolean;
+  target: string | null;
+}
+
+export interface PrinterResult {
+  printed: boolean;
+  reason?: string;
+}
+
+// One entry from `webContents.getPrintersAsync()` — `name` is the
+// OS-understood identifier (what gets stored/used for printing), `displayName`
+// the friendlier label shown in the Settings dropdown.
+export interface DiscoveredPrinter {
+  name: string;
+  displayName: string;
+}
+
+// Static, non-sale-dependent pieces needed to render an on-screen
+// approximation of the receipt in Settings — there's no physical printer
+// needed (or, per the barcode, even any hardware capable of showing it) to
+// check the logo/layout look right. `logoPngDataUrl` is a ready-to-use
+// `data:image/png;base64,...` string — a PNG re-encoding of the exact same
+// monochrome bitmap the printer receives (see electron/hardware/logo.ts),
+// not the original source image. `sampleReference` is a fixed stand-in for
+// the real per-sale barcode content (electron/hardware/receipt.ts's
+// receiptReference), rendered client-side with the `jsbarcode` library.
+export interface ReceiptPreviewAssets {
+  storeName: string;
+  logoPngDataUrl: string;
+  sampleReference: string;
+  lineWidth: number;
 }

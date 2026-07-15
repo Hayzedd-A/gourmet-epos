@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8607d2a2-fb63-4d83-ad98-d83b05aba26d",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "62f097e4-7ab3-4d4d-b16e-7d6b2e3c1322",
+  "prevId": "28dbebce-7683-4dad-abb9-8b69fbb3e16c",
   "tables": {
     "outbox": {
       "name": "outbox",
@@ -598,6 +598,34 @@
         },
         "display_name": {
           "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "printer_name": {
+          "name": "printer_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "store_address": {
+          "name": "store_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "store_phone": {
+          "name": "store_phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "store_email": {
+          "name": "store_email",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

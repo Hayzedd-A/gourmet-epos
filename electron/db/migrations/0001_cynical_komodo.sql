@@ -1,0 +1,1 @@
+ALTER TABLE `terminal_config` ADD `printer_name` text;

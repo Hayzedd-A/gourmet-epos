@@ -11,7 +11,7 @@
     "build:next": "next build",
     "build:electron": "tsup --config tsup.electron.config.ts",
     "build": "npm run build:next && npm run build:electron && electron-builder",
-    "build:win": "npm run build:next && npm run build:electron && electron-builder --win --x64",
+    "build:win": "node scripts/build-win.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
@@ -23,6 +23,7 @@
     "better-sqlite3": "^12.11.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
+    "jsbarcode": "^3.12.3",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -38,7 +39,7 @@
     "@types/serve-handler": "^6.1.4",
     "concurrently": "^10.0.3",
     "drizzle-kit": "^0.31.10",
-    "electron": "^43.1.0",
+    "electron": "^42.6.1",
     "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
@@ -56,8 +57,11 @@
       "output": "release"
     },
     "win": {
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
+    "npmRebuild": false,
     "files": [
       "dist-electron/**/*",
       "out/**/*",

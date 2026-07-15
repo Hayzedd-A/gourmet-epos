@@ -1,10 +1,14 @@
 import type {
+  DiscoveredPrinter,
   HeldOrderFinalizeInput,
   HeldOrderInput,
   PaymentMethodOption,
   PaymentReceiptCandidate,
+  PrinterResult,
+  PrinterStatus,
   Product,
   ProductInput,
+  ReceiptPreviewAssets,
   ReconcileSummary,
   Sale,
   SaleInput,
@@ -30,6 +34,12 @@ export interface Api {
     // Validates the key against the real endpoint and stores it on
     // success; throws with a clear message on an invalid/inactive key.
     activate(apiKey: string): Promise<TerminalStatus>;
+    // Purely local/cosmetic till label, printed on receipts as "Device".
+    // Pass null to clear it. Any logged-in role may set it.
+    updateDisplayName(displayName: string | null): Promise<TerminalStatus>;
+    // Store address/phone/email, printed on the receipt just after the
+    // store name. Pass null (or an empty string) on any field to clear it.
+    updateStoreInfo(input: { address: string | null; phone: string | null; email: string | null }): Promise<TerminalStatus>;
   };
   auth: {
     loginPin(pin: string): Promise<Session>;
@@ -117,12 +127,28 @@ export interface Api {
   };
   printer: {
     printReceipt(saleId: string): Promise<void>;
+    // What this terminal will try to print to and whether it's configured
+    // — see electron/hardware/printer.ts.
+    getStatus(): Promise<PrinterStatus>;
+    // Prints a minimal test slip so Settings can confirm the printer/OS
+    // wiring works without needing a real sale.
+    testPrint(): Promise<PrinterResult>;
+    // Printers the OS already knows about (Windows print spooler / CUPS),
+    // for the Settings picker — see docs/ARCHITECTURE.md §10.
+    listPrinters(): Promise<DiscoveredPrinter[]>;
+    // Persists the chosen printer's OS name; pass null to clear it.
+    setPrinterName(name: string | null): Promise<PrinterStatus>;
+    // Static assets (logo PNG, store name, sample barcode text) for
+    // Settings' on-screen receipt preview — see docs/ARCHITECTURE.md §10.
+    getReceiptPreviewAssets(): Promise<ReceiptPreviewAssets>;
   };
 }
 
 export const IPC_CHANNELS = {
   terminalGetStatus: "terminal:getStatus",
   terminalActivate: "terminal:activate",
+  terminalUpdateDisplayName: "terminal:updateDisplayName",
+  terminalUpdateStoreInfo: "terminal:updateStoreInfo",
   authLoginPin: "auth:loginPin",
   authGetSession: "auth:getSession",
   authLogout: "auth:logout",
@@ -150,4 +176,9 @@ export const IPC_CHANNELS = {
   syncGetState: "sync:getState",
   syncTriggerNow: "sync:triggerNow",
   printerPrintReceipt: "printer:printReceipt",
+  printerGetStatus: "printer:getStatus",
+  printerTestPrint: "printer:testPrint",
+  printerListPrinters: "printer:listPrinters",
+  printerSetPrinterName: "printer:setPrinterName",
+  printerGetReceiptPreviewAssets: "printer:getReceiptPreviewAssets",
 } as const;
