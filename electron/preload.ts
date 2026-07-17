@@ -69,6 +69,10 @@ const api: Api = {
     setPrinterName: (name) => ipcRenderer.invoke(IPC_CHANNELS.printerSetPrinterName, name),
     getReceiptPreviewAssets: () => ipcRenderer.invoke(IPC_CHANNELS.printerGetReceiptPreviewAssets),
   },
+  reports: {
+    exportSalesCsv: (sales, staffNames, defaultFileName) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reportsExportSalesCsv, sales, staffNames, defaultFileName),
+  },
   staff: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.staffList),
     create: (input) => ipcRenderer.invoke(IPC_CHANNELS.staffCreate, input),

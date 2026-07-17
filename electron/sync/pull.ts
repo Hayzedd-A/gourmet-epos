@@ -23,11 +23,11 @@ import * as zupa from "../zupa/client";
  */
 export async function pullCatalog(db: ReturnType<typeof getDb>): Promise<{ pulled: number }> {
   const config = getTerminalConfig(db);
-  if (!config.apiKey) {
+  if (!config.apiKey || !config.deviceId) {
     return { pulled: 0 };
   }
 
-  const response = await zupa.fetchTerminalProducts(config.apiKey, "all");
+  const response = await zupa.fetchTerminalProducts({ apiKey: config.apiKey, deviceId: config.deviceId }, "all");
   const now = Date.now();
 
   const productRows: (typeof productCache.$inferInsert)[] = response.products.map((p) => {
@@ -81,11 +81,11 @@ export async function pullCatalog(db: ReturnType<typeof getDb>): Promise<{ pulle
  */
 export async function pullPaymentMethods(db: ReturnType<typeof getDb>): Promise<{ pulled: number }> {
   const config = getTerminalConfig(db);
-  if (!config.apiKey) {
+  if (!config.apiKey || !config.deviceId) {
     return { pulled: 0 };
   }
 
-  const methods = await zupa.fetchPaymentMethods(config.apiKey);
+  const methods = await zupa.fetchPaymentMethods({ apiKey: config.apiKey, deviceId: config.deviceId });
   if (!methods) {
     return { pulled: 0 };
   }

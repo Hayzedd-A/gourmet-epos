@@ -1,5 +1,6 @@
 import type {
   DiscoveredPrinter,
+  ExportResult,
   HeldOrderFinalizeInput,
   HeldOrderInput,
   PaymentMethodOption,
@@ -142,6 +143,17 @@ export interface Api {
     // Settings' on-screen receipt preview — see docs/ARCHITECTURE.md §10.
     getReceiptPreviewAssets(): Promise<ReceiptPreviewAssets>;
   };
+  // admin/super_admin only (see shared/permissions.ts's canExportData,
+  // enforced server-side in electron/ipc/handlers/reports.ts, not just
+  // hidden in the UI) — used by both the Sales and Reconciliation pages.
+  reports: {
+    // `sales`/`staffNames` are exactly what the calling page already has in
+    // state (its current filtered view, or a fresh unfiltered fetch for
+    // "export all") — this just turns them into a CSV and shows a native
+    // Save dialog; `defaultFileName` seeds that dialog's suggested name.
+    // `path` is null (not an error) if the user cancels the dialog.
+    exportSalesCsv(sales: Sale[], staffNames: Record<string, string>, defaultFileName: string): Promise<ExportResult>;
+  };
 }
 
 export const IPC_CHANNELS = {
@@ -181,4 +193,5 @@ export const IPC_CHANNELS = {
   printerListPrinters: "printer:listPrinters",
   printerSetPrinterName: "printer:setPrinterName",
   printerGetReceiptPreviewAssets: "printer:getReceiptPreviewAssets",
+  reportsExportSalesCsv: "reports:exportSalesCsv",
 } as const;

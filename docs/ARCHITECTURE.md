@@ -110,7 +110,11 @@ This app now talks to a purpose-built Terminal API (`/terminal-api/*` in `zupa-a
 
 **Two independent tracks: device identity and person identity.** They're never conflated — a terminal can be activated with nobody logged in, and someone can log in on a terminal that isn't activated yet (though nothing useful works until it is, see below).
 
-**Device: terminal activation (hard gate before login).** `terminal_config.apiKey`/`storeId` are null until an admin registers this device in ZupaFE (Store Builder → Devices), which returns an `apiKey` shown exactly once. epos's `app/page.tsx` checks `terminal:getStatus()` first, before anything else: if not activated, it renders `ActivationScreen` (paste the API key) instead of any login UI — no PIN login, no super-admin login, nothing, until activation succeeds. There's no dedicated "validate this key" endpoint, so activation just calls `GET /terminal-api/products/all` with the entered key: a 401 means invalid/inactive, success gives back `storeId` (resolved server-side from the key) to store locally. This key is sent as `X-Terminal-Key` on every Terminal API call going forward, and **is not tied to any person's session** — background sync and the manual "Sync now" button work regardless of who's logged in (or if anyone is), same as before.
+**Device: terminal activation (hard gate before login), now bound to one physical device.** `terminal_config.apiKey`/`storeId` are null until an admin registers this device in ZupaFE (Store Builder → Devices), which returns an `apiKey` shown exactly once. epos's `app/page.tsx` checks `terminal:getStatus()` first, before anything else: if not activated, it renders `ActivationScreen` (paste the API key) instead of any login UI — no PIN login, no super-admin login, nothing, until activation succeeds.
+
+Activation calls `POST /terminal-api/auth/validate` (`electron/zupa/client.ts#validateTerminal`) with the key as `X-Terminal-Key` and this install's `terminal_config.deviceId` (a random UUID generated once per install, `electron/db/seed.ts` — distinct from `deviceSecret`, a local-only HMAC key for PIN hashing that's never sent anywhere, and from `terminalId`, a non-unique local attribution id) in the request body. Zupa binds the key to whichever deviceId first validates with it, and returns `{terminal: {storeId, ...}, paymentMethods}` on success; every terminal-api call after that also sends `X-Device-Id` (`electron/zupa/client.ts`'s `TerminalCredentials`/`terminalHeaders`) and gets rejected with a 403 (`DeviceMismatchError`) if the deviceId doesn't match what the key is bound to — this is what stops one leaked/shared key from being used on two physical machines at once.
+
+**Recovering from a device-auth error** (e.g. the key was rotated server-side, or this install's local deviceId changed) always means re-entering an API key — there's no separate "unbind" step. Settings' Terminal activation panel exposes the same API-key input/`terminal:activate` call used for first activation at all times (not hidden once activated), labeled "Revalidate" when already activated — pasting a (possibly freshly rotated) key re-runs `validateTerminal` and rebinds. A `DeviceMismatchError`'s message is server-supplied and already specific about which case applies (never validated yet vs. bound to a different device), and surfaces as-is through whichever call triggered it (sync's `lastError`, a payment action's own error, etc.).
 
 Three roles, two login paths, for the *person* using an already-activated terminal:
 
@@ -233,18 +237,28 @@ Theme is **not** driven by the OS's `prefers-color-scheme` — it's an explicit 
 
 **Electron is pinned to `^42.6.1`, not the latest 43.x**, for a related reason: `better-sqlite3`'s latest release (`12.11.1`) only publishes prebuilt binaries through Electron ABI 146 (Electron 42.x); Electron 43 uses ABI 148, which has no published Windows prebuild yet, and cross-compiling in from source isn't an option (see above). Revisit this pin once `better-sqlite3` catches up.
 
+## 10c. Auto-update
+
+Every till used to need the installer re-run by hand for each new version — `electron-updater` (`electron/updater.ts`) fixes that: on startup (and every 4 hours after, since a till can stay open all day), it checks for a newer version, downloads it silently in the background, and only installs on an explicit "Restart now" in a dialog or the next time the app naturally quits (`autoInstallOnAppQuit`) — never a forced mid-shift restart. Pure JS, no native module, so it carries none of the cross-compile risk `better-sqlite3`/`sharp` do (§10b).
+
+**Releases still publish straight to GitHub** — `package.json`'s `build.publish` (`{provider: "github", owner: "Hayzedd-A", repo: "gourmet-epos"}`) is what `electron-builder --publish always` (`npm run release:win`, needs a `GH_TOKEN` env var — a personal access token with `repo` scope, build-machine-only, never shipped in the app) uses to create the GitHub Release and upload the installer + `latest.yml`/blockmap. **owner/repo here need updating once the repo moves to its private org home** (see below).
+
+**But the runtime update check doesn't hit GitHub directly** — `electron-updater`'s default feed (baked into the packaged app as `app-update.yml` from the `publish` config above) would need a GitHub credential embedded in every till to read a private repo, which is a real problem: rotating that credential before it expires would itself require a *working* update channel to redistribute the new one — miss that window once and the whole fleet is stuck needing a manual reinstall, the exact thing auto-update exists to avoid. So instead, `startAutoUpdater()` calls `autoUpdater.setFeedURL()` at runtime to redirect checks through **zupa-api's `/terminal-api/updates/:filename` proxy** (`zupa-api/src/modules/terminal/index.js`) instead, sending the till's own `X-Terminal-Key` (same credential every other `/terminal-api/*` call already uses — no new credential on the till side at all). That proxy holds the real GitHub token (`GH_RELEASES_TOKEN` env var, a fine-grained PAT scoped read-only to just this repo) server-side: it fetches the latest release's metadata from GitHub, serves `.yml` manifests directly, and for the installer/blockmap binaries (which can be tens of MB) 302-redirects the till to GitHub's own short-lived signed download URL rather than streaming the bytes through zupa-api itself. Rotating `GH_RELEASES_TOKEN` is then just a server-side env var update — zero redistribution to tills required, ever.
+
 ## 11. Repo layout
 
 ```
 electron/
   main.ts, preload.ts, menu.ts
+  updater.ts    electron-updater wiring — see §10c
   db/           Drizzle schema, migrations, sales.ts (resolveLineItems/replaceLineItems/
                  assembleSale — shared by sales.ts and heldOrders.ts, see §9)
   sync/         pull.ts, push.ts, outbox worker
-  hardware/     printer.ts, receipt.ts
-  zupa/         client.ts (terminalFetch = X-Terminal-Key auth, used by every outbound
-                 call today; submitOrder — see §5 — payment search/match/options
-                 fetchers — see §8)
+  hardware/     printer.ts, receipt.ts, logo.ts
+  zupa/         client.ts (TerminalCredentials = X-Terminal-Key + X-Device-Id, sent on
+                 every outbound call via terminalFetch/terminalHeaders — see §6;
+                 validateTerminal binds/checks device pairing; submitOrder — see §5 —
+                 payment search/match/options fetchers — see §8)
   ipc/handlers/ terminal.ts (activation), auth.ts, catalog.ts, sales.ts (direct checkout),
                  heldOrders.ts (list/hold/discard/finalize — see §9), staff.ts, shifts.ts,
                  sync.ts, printer.ts, payments.ts (search/match/reconcileAll, tryAutoMatchSale)

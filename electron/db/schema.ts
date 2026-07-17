@@ -42,6 +42,16 @@ export const terminalConfig = sqliteTable("terminal_config", {
   storeAddress: text("store_address"),
   storePhone: text("store_phone"),
   storeEmail: text("store_email"),
+  // Random UUID generated once per install (electron/db/seed.ts), sent as
+  // `X-Device-Id` on every terminal-api call alongside the API key. Zupa
+  // binds a terminal's apiKey to the first deviceId it validates with
+  // (POST /terminal-api/auth/validate) and rejects any other deviceId
+  // trying to use that same key (403) — this is what stops one leaked/
+  // shared key from being used on two physical machines at once. Distinct
+  // from `deviceSecret` (a local-only HMAC key for PIN hashing, never sent
+  // anywhere) and from `terminalId` (a non-unique local attribution id,
+  // "demo-terminal-1" on every fresh install — NOT safe to reuse here).
+  deviceId: text("device_id"),
 });
 
 // Local roster: staff/admin PIN accounts (created by a super admin, see

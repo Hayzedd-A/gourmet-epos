@@ -13,6 +13,7 @@ import { buildMenu } from "./menu";
 import { getTerminalConfig } from "./db/terminal";
 import { startSyncScheduler, stopSyncScheduler } from "./sync/engine";
 import { startStaticServer, resolveOutDir } from "./staticServer";
+import { startAutoUpdater, stopAutoUpdater } from "./updater";
 
 const DEV_SERVER_URL = "http://localhost:7282";
 const STATIC_SERVER_PORT = 41732;
@@ -100,6 +101,7 @@ app.whenReady().then(async () => {
 
   await createWindow();
   buildMenu(db, mainWindow!);
+  startAutoUpdater(mainWindow!, getTerminalConfig(db).apiKey);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -113,6 +115,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   stopSyncScheduler();
+  stopAutoUpdater();
   if (process.platform !== "darwin") {
     app.quit();
   }

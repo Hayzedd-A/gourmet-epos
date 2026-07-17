@@ -167,8 +167,8 @@ export function registerHeldOrdersHandlers(ipcMain: IpcMain, db: ReturnType<type
       });
 
       // Fire-and-forget, same as sales:create — see docs/ARCHITECTURE.md §8.
-      if (config.apiKey) {
-        void tryAutoMatchSale(db, config.apiKey, existing.id, total, now, method.id);
+      if (config.apiKey && config.deviceId) {
+        void tryAutoMatchSale(db, { apiKey: config.apiKey, deviceId: config.deviceId }, existing.id, total, now, method.id);
       }
 
       const row = db.select().from(sale).where(eq(sale.id, existing.id)).get()!;

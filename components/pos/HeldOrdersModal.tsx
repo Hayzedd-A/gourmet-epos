@@ -26,6 +26,11 @@ function HeldOrdersDialog({
 }: Omit<HeldOrdersModalProps, "open">) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Arms an inline "Confirm discard?" in place of the Discard/Resume buttons
+  // for one order — window.confirm() isn't an option here: Electron's
+  // sandboxed renderer (contextIsolation + sandbox: true, see
+  // electron/main.ts) doesn't implement it, and throws instead.
+  const [confirmingDiscardId, setConfirmingDiscardId] = useState<string | null>(null);
 
   async function handleResume(order: Sale) {
     setBusyId(order.id);
@@ -40,7 +45,7 @@ function HeldOrdersDialog({
   }
 
   async function handleDiscard(order: Sale) {
-    if (!window.confirm(`Discard "${order.label ?? "this order"}"? This cannot be undone.`)) return;
+    setConfirmingDiscardId(null);
     setBusyId(order.id);
     setError(null);
     try {
@@ -88,17 +93,35 @@ function HeldOrdersDialog({
                     </span>
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      disabled={busyId === order.id}
-                      onClick={() => void handleDiscard(order)}
-                    >
-                      Discard
-                    </Button>
-                    <Button size="md" loading={busyId === order.id} onClick={() => void handleResume(order)}>
-                      Resume
-                    </Button>
+                    {confirmingDiscardId === order.id ? (
+                      <>
+                        <Button variant="secondary" size="md" onClick={() => setConfirmingDiscardId(null)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="md"
+                          loading={busyId === order.id}
+                          onClick={() => void handleDiscard(order)}
+                        >
+                          Confirm discard
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          disabled={busyId === order.id}
+                          onClick={() => setConfirmingDiscardId(order.id)}
+                        >
+                          Discard
+                        </Button>
+                        <Button size="md" loading={busyId === order.id} onClick={() => void handleResume(order)}>
+                          Resume
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </li>
               ))}

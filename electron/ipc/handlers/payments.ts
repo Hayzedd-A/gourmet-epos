@@ -14,6 +14,7 @@ import type {
 } from "../../../shared/types/domain";
 import * as zupa from "../../zupa/client";
 import { PaymentAlreadyMatchedError } from "../../zupa/client";
+import type { TerminalCredentials } from "../../zupa/client";
 
 function requireSession() {
   if (!appState.session) {
@@ -22,12 +23,12 @@ function requireSession() {
   return appState.session;
 }
 
-function requireApiKey(db: ReturnType<typeof getDb>): string {
+function requireCredentials(db: ReturnType<typeof getDb>): TerminalCredentials {
   const config = getTerminalConfig(db);
-  if (!config.apiKey) {
+  if (!config.apiKey || !config.deviceId) {
     throw new Error("Terminal not activated");
   }
-  return config.apiKey;
+  return { apiKey: config.apiKey, deviceId: config.deviceId };
 }
 
 /**
@@ -37,12 +38,12 @@ function requireApiKey(db: ReturnType<typeof getDb>): string {
  */
 async function claimForSale(
   db: ReturnType<typeof getDb>,
-  apiKey: string,
+  creds: TerminalCredentials,
   saleId: string,
   transactionRef: string,
 ): Promise<void> {
   try {
-    await zupa.matchPaymentReceipt(apiKey, transactionRef);
+    await zupa.matchPaymentReceipt(creds, transactionRef);
   } catch (cause) {
     if (!(cause instanceof PaymentAlreadyMatchedError)) throw cause;
   }
@@ -62,14 +63,14 @@ async function claimForSale(
  */
 export async function tryAutoMatchSale(
   db: ReturnType<typeof getDb>,
-  apiKey: string,
+  creds: TerminalCredentials,
   saleId: string,
   amount: number,
   soldAt: number,
   paymentMethodId: string,
 ): Promise<"matched" | "ambiguous" | "none" | "error"> {
   try {
-    const result = await zupa.searchPaymentReceipts(apiKey, {
+    const result = await zupa.searchPaymentReceipts(creds, {
       amount,
       time: new Date(soldAt).toISOString(),
       paymentMethodId,
@@ -77,7 +78,7 @@ export async function tryAutoMatchSale(
     if (result.count !== 1) {
       return result.count === 0 ? "none" : "ambiguous";
     }
-    await claimForSale(db, apiKey, saleId, result.receipts[0].transactionRef);
+    await claimForSale(db, creds, saleId, result.receipts[0].transactionRef);
     return "matched";
   } catch {
     return "error";
@@ -100,7 +101,7 @@ export function registerPaymentsHandlers(ipcMain: IpcMain, db: ReturnType<typeof
       params: { amount: number; time?: string; paymentMethodId?: string },
     ): Promise<{ count: number; receipts: PaymentReceiptCandidate[] }> => {
       requireSession();
-      return zupa.searchPaymentReceipts(requireApiKey(db), params);
+      return zupa.searchPaymentReceipts(requireCredentials(db), params);
     },
   );
 
@@ -108,7 +109,7 @@ export function registerPaymentsHandlers(ipcMain: IpcMain, db: ReturnType<typeof
     IPC_CHANNELS.paymentsMatch,
     async (_event, saleId: string, transactionRef: string): Promise<Sale> => {
       requireSession();
-      await claimForSale(db, requireApiKey(db), saleId, transactionRef);
+      await claimForSale(db, requireCredentials(db), saleId, transactionRef);
       const row = db.select().from(sale).where(eq(sale.id, saleId)).get();
       if (!row) {
         throw new Error("Sale not found");
@@ -119,7 +120,7 @@ export function registerPaymentsHandlers(ipcMain: IpcMain, db: ReturnType<typeof
 
   ipcMain.handle(IPC_CHANNELS.paymentsReconcileAll, async (): Promise<ReconcileSummary> => {
     requireSession();
-    const apiKey = requireApiKey(db);
+    const creds = requireCredentials(db);
 
     const unmatched = db
       .select()
@@ -130,7 +131,7 @@ export function registerPaymentsHandlers(ipcMain: IpcMain, db: ReturnType<typeof
     const summary: ReconcileSummary = { attempted: unmatched.length, matched: 0, ambiguous: 0, none: 0, errors: 0 };
     for (const row of unmatched) {
       // status: "completed" guarantees both are set.
-      const outcome = await tryAutoMatchSale(db, apiKey, row.id, row.total, row.soldAt!, row.paymentMethodId!);
+      const outcome = await tryAutoMatchSale(db, creds, row.id, row.total, row.soldAt!, row.paymentMethodId!);
       if (outcome === "matched") summary.matched += 1;
       else if (outcome === "ambiguous") summary.ambiguous += 1;
       else if (outcome === "none") summary.none += 1;

@@ -31,8 +31,17 @@ export function seed(db: ReturnType<typeof getDb>) {
       storeAddress: "19B Fola Osibo, Lekki 1\nLagos\n10001",
       storePhone: "0701 824 9203",
       storeEmail: "hello@gourmettwist.ng",
+      deviceId: randomUUID(),
     };
     db.insert(terminalConfig).values(config).run();
+  } else if (!config.deviceId) {
+    // Backfill for installs that migrated through 0003_slimy_rockslide.sql
+    // before ever getting a deviceId — SQLite has no built-in UUID
+    // generation, so this can't be done as a data migration in the SQL
+    // file itself (see electron/db/schema.ts).
+    const deviceId = randomUUID();
+    db.update(terminalConfig).set({ deviceId }).where(eq(terminalConfig.id, "default")).run();
+    config = { ...config, deviceId };
   }
   const deviceSecret = config.deviceSecret;
 
