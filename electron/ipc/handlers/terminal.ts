@@ -47,20 +47,32 @@ export function registerTerminalHandlers(ipcMain: IpcMain, db: ReturnType<typeof
     },
   );
 
-  // No dedicated "validate key" endpoint exists — fetching the catalog is
-  // the practical validation: a 401 means the key is invalid/inactive, and
-  // success gives us the storeId (resolved server-side from the key) to
-  // store locally. See docs/ARCHITECTURE.md §6.
+  // Validates the key against POST /terminal-api/auth/validate, which also
+  // binds it to this install's deviceId (electron/db/schema.ts) on first
+  // use — a 403 here means the key is already bound to a *different*
+  // device (DeviceMismatchError, see electron/zupa/client.ts), which
+  // propagates as a plain error message to whoever called this.
+  //
+  // This same handler doubles as the "revalidate this device" recovery
+  // path — it's not gated behind "not yet activated", so re-calling it
+  // later (e.g. after a device-auth error surfaced elsewhere, or with a
+  // freshly rotated key) works the same way as first activation. See
+  // docs/ARCHITECTURE.md §6.
   ipcMain.handle(IPC_CHANNELS.terminalActivate, async (_event, apiKey: string): Promise<TerminalStatus> => {
     const trimmed = apiKey.trim();
     if (!trimmed) {
       throw new Error("Enter an API key");
     }
 
-    const result = await zupa.fetchTerminalProducts(trimmed, "all");
+    const { deviceId } = getTerminalConfig(db);
+    if (!deviceId) {
+      throw new Error("This terminal has no device id yet — restart the app and try again");
+    }
+
+    const result = await zupa.validateTerminal({ apiKey: trimmed, deviceId });
 
     db.update(terminalConfig)
-      .set({ apiKey: trimmed, storeId: result.storeId })
+      .set({ apiKey: trimmed, storeId: result.terminal.storeId })
       .where(eq(terminalConfig.id, "default"))
       .run();
 

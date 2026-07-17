@@ -19,3 +19,8 @@ export function canReconcilePayments(role: AccessRole | undefined | null): boole
 export function canViewAllSales(role: AccessRole | undefined | null): boolean {
   return role === "admin" || role === "super_admin";
 }
+
+/** admin and super_admin can export sales/reconciliation data to CSV; enforced server-side in reports:exportSalesCsv, not just hidden in the UI. */
+export function canExportData(role: AccessRole | undefined | null): boolean {
+  return role === "admin" || role === "super_admin";
+}

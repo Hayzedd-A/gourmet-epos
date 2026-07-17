@@ -9,45 +9,124 @@ export class ZupaApiError extends Error {}
 export class PaymentAlreadyMatchedError extends ZupaApiError {}
 
 /**
- * Calls requiring the terminal's own device identity (X-Terminal-Key), not
- * a person's JWT. See docs/ARCHITECTURE.md §6 — a person's `jwt` (set by
- * `auth:loginSuperAdmin`) isn't used for any outbound Zupa call today; it
- * only proves this person holds real Zupa admin credentials, nothing more.
+ * Thrown on a 403 from any terminal-api call — Zupa binds a terminal's
+ * apiKey to the first deviceId it validates with (see validateTerminal
+ * below) and rejects every other deviceId trying to use that key. In
+ * practice this means either: this device was never validated yet, or the
+ * key is now bound to a *different* physical device (e.g. the key leaked,
+ * or this install's local deviceId was reset/backfilled after already
+ * binding elsewhere) — the fix is always re-entering a (possibly freshly
+ * rotated) API key in Settings, which re-runs validateTerminal. Message
+ * text comes straight from the server, which is already specific about
+ * which of those two cases applies.
  */
-async function terminalFetch<T>(path: string, apiKey: string, init?: RequestInit): Promise<T> {
+export class DeviceMismatchError extends ZupaApiError {}
+
+/**
+ * The terminal's own device identity, sent on every terminal-api call —
+ * not a person's JWT. See docs/ARCHITECTURE.md §6 — a person's `jwt` (set
+ * by `auth:loginSuperAdmin`) isn't used for any outbound Zupa call today;
+ * it only proves this person holds real Zupa admin credentials, nothing
+ * more. `deviceId` is `terminal_config.deviceId` (electron/db/schema.ts) —
+ * a random UUID generated once per install, distinct from the apiKey
+ * itself.
+ */
+export interface TerminalCredentials {
+  apiKey: string;
+  deviceId: string;
+}
+
+function terminalHeaders(creds: TerminalCredentials, hasBody: boolean): HeadersInit {
+  return {
+    "x-terminal-key": creds.apiKey,
+    "x-device-id": creds.deviceId,
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
+  };
+}
+
+async function handleTerminalError(response: Response, path: string): Promise<never> {
+  const body = await response.text().catch(() => "");
+  // The server's error responses are `{ message: "..." }` — surfaced
+  // as-is where it matters (e.g. Settings' revalidate result), so this is
+  // worth unwrapping rather than showing the raw JSON.
+  const message = ((): string | null => {
+    try {
+      const parsed = JSON.parse(body) as { message?: unknown };
+      return typeof parsed.message === "string" ? parsed.message : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  if (response.status === 401) {
+    throw new ZupaApiError("Invalid or inactive terminal API key");
+  }
+  if (response.status === 403) {
+    throw new DeviceMismatchError(message ?? "This device isn't validated for this terminal's API key");
+  }
+  throw new ZupaApiError(`Zupa API ${response.status} on ${path}: ${(message ?? body).slice(0, 300)}`);
+}
+
+async function terminalFetch<T>(path: string, creds: TerminalCredentials, init?: RequestInit): Promise<T> {
   let response: Response;
-  console.log(`${zupaConfig.baseUrl}${path}`, "path");
-  console.log(apiKey, "key");
   try {
     response = await fetch(`${zupaConfig.baseUrl}${path}`, {
       ...init,
       headers: {
-        "x-terminal-key": apiKey,
-        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...terminalHeaders(creds, Boolean(init?.body)),
         ...init?.headers,
       },
     });
   } catch (cause) {
-    console.log(cause, "cause");
     throw new ZupaApiError(
       `Could not reach Zupa API: ${(cause as Error).message}`,
     );
   }
 
-  if (response.status === 401) {
-    const body = await response.text().catch(() => "");
-    console.log(body, "body");
-    throw new ZupaApiError("Invalid or inactive terminal API key");
-  }
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    console.log(body, "body");
-    throw new ZupaApiError(
-      `Zupa API ${response.status} on ${path}: ${body.slice(0, 300)}`,
-    );
+    await handleTerminalError(response, path);
   }
 
   return response.json() as Promise<T>;
+}
+
+export interface ValidateTerminalResponse {
+  terminal: { id: string; name: string; storeId: string; metadata: Record<string, unknown> | null };
+  paymentMethods: ZupaPaymentMethod[];
+}
+
+/**
+ * `POST /terminal-api/auth/validate` — binds `creds.apiKey` to
+ * `creds.deviceId` on first use, or confirms the pairing already matches on
+ * every call after (both succeed the same way from here). Rejects with
+ * `DeviceMismatchError` (403) if that apiKey is already bound to a
+ * *different* deviceId — the only fix on the server side is rotating the
+ * key, then re-calling this with the new one (see electron/ipc/handlers/
+ * terminal.ts's terminalActivate, which both first-activates and
+ * re-validates through this same call).
+ *
+ * `deviceId` goes in the body here, not the `X-Device-Id` header every
+ * other terminal-api call uses — this is the one endpoint that's still
+ * establishing the pairing, so there's nothing to compare a header against
+ * yet server-side.
+ */
+export async function validateTerminal(creds: TerminalCredentials): Promise<ValidateTerminalResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${zupaConfig.baseUrl}/terminal-api/auth/validate`, {
+      method: "POST",
+      headers: { "x-terminal-key": creds.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceId: creds.deviceId }),
+    });
+  } catch (cause) {
+    throw new ZupaApiError(`Could not reach Zupa API: ${(cause as Error).message}`);
+  }
+
+  if (!response.ok) {
+    await handleTerminalError(response, "/terminal-api/auth/validate");
+  }
+
+  return response.json() as Promise<ValidateTerminalResponse>;
 }
 
 export interface ZupaLoginResponse {
@@ -127,10 +206,10 @@ export interface ZupaTerminalProductsResponse {
  * is a client-side filter on `source`, not two separate requests.
  */
 export function fetchTerminalProducts(
-  apiKey: string,
+  creds: TerminalCredentials,
   prodType: TerminalProductType = "all",
 ): Promise<ZupaTerminalProductsResponse> {
-  return terminalFetch(`/terminal-api/products/${prodType}`, apiKey);
+  return terminalFetch(`/terminal-api/products/${prodType}`, creds);
 }
 
 export interface PaymentSearchResponse {
@@ -156,10 +235,10 @@ export interface PaymentSearchResponse {
  * vanish if that working tree is reset before it's committed.
  */
 export function searchPaymentReceipts(
-  apiKey: string,
+  creds: TerminalCredentials,
   params: { amount: number; time?: string; paymentMethodId?: string },
 ): Promise<PaymentSearchResponse> {
-  return terminalFetch("/terminal-api/payment/search", apiKey, {
+  return terminalFetch("/terminal-api/payment/search", creds, {
     method: "POST",
     body: JSON.stringify(params),
   });
@@ -180,14 +259,14 @@ export interface PaymentMatchResponse {
  * search and should treat a 409 as a successful claim.
  */
 export async function matchPaymentReceipt(
-  apiKey: string,
+  creds: TerminalCredentials,
   transactionRef: string,
 ): Promise<PaymentMatchResponse> {
   let response: Response;
   try {
     response = await fetch(`${zupaConfig.baseUrl}/terminal-api/payment/match`, {
       method: "POST",
-      headers: { "x-terminal-key": apiKey, "Content-Type": "application/json" },
+      headers: terminalHeaders(creds, true),
       body: JSON.stringify({ transactionRef }),
     });
   } catch (cause) {
@@ -197,14 +276,8 @@ export async function matchPaymentReceipt(
   if (response.status === 409) {
     throw new PaymentAlreadyMatchedError("Receipt already matched — safe to treat as success");
   }
-  if (response.status === 401) {
-    throw new ZupaApiError("Invalid or inactive terminal API key");
-  }
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new ZupaApiError(
-      `Zupa API ${response.status} on /terminal-api/payment/match: ${body.slice(0, 300)}`,
-    );
+    await handleTerminalError(response, "/terminal-api/payment/match");
   }
 
   return response.json() as Promise<PaymentMatchResponse>;
@@ -235,11 +308,11 @@ export interface PaymentMethodsSyncResponse {
  * defaults (db/seed.ts) instead of failing outright, in case that working
  * tree gets reset before this lands on a real branch.
  */
-export async function fetchPaymentMethods(apiKey: string): Promise<PaymentMethodOption[] | null> {
+export async function fetchPaymentMethods(creds: TerminalCredentials): Promise<PaymentMethodOption[] | null> {
   let response: Response;
   try {
     response = await fetch(`${zupaConfig.baseUrl}/terminal-api/payment-methods/sync`, {
-      headers: { "x-terminal-key": apiKey },
+      headers: terminalHeaders(creds, false),
     });
   } catch (cause) {
     throw new ZupaApiError(`Could not reach Zupa API: ${(cause as Error).message}`);
@@ -248,14 +321,8 @@ export async function fetchPaymentMethods(apiKey: string): Promise<PaymentMethod
   if (response.status === 404) {
     return null;
   }
-  if (response.status === 401) {
-    throw new ZupaApiError("Invalid or inactive terminal API key");
-  }
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new ZupaApiError(
-      `Zupa API ${response.status} on /terminal-api/payment-methods/sync: ${body.slice(0, 300)}`,
-    );
+    await handleTerminalError(response, "/terminal-api/payment-methods/sync");
   }
 
   const { paymentMethods } = (await response.json()) as PaymentMethodsSyncResponse;
@@ -321,7 +388,7 @@ export interface OrderSubmitResponse {
  * retry the same request once the race resolves, which this does internally
  * (a few short retries) rather than surfacing 409 to the caller.
  */
-export async function submitOrder(apiKey: string, input: OrderSubmitInput): Promise<OrderSubmitResponse> {
+export async function submitOrder(creds: TerminalCredentials, input: OrderSubmitInput): Promise<OrderSubmitResponse> {
   const MAX_ATTEMPTS = 3;
   let lastError: unknown;
 
@@ -330,7 +397,7 @@ export async function submitOrder(apiKey: string, input: OrderSubmitInput): Prom
     try {
       response = await fetch(`${zupaConfig.baseUrl}/terminal-api/order/submit`, {
         method: "POST",
-        headers: { "x-terminal-key": apiKey, "Content-Type": "application/json" },
+        headers: terminalHeaders(creds, true),
         body: JSON.stringify(input),
       });
     } catch (cause) {
@@ -342,14 +409,8 @@ export async function submitOrder(apiKey: string, input: OrderSubmitInput): Prom
       await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
       continue;
     }
-    if (response.status === 401) {
-      throw new ZupaApiError("Invalid or inactive terminal API key");
-    }
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new ZupaApiError(
-        `Zupa API ${response.status} on /terminal-api/order/submit: ${body.slice(0, 300)}`,
-      );
+      await handleTerminalError(response, "/terminal-api/order/submit");
     }
     return response.json() as Promise<OrderSubmitResponse>;
   }

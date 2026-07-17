@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SaleDetailModal } from "@/components/sales/SaleDetailModal";
+import { VoidSaleModal } from "@/components/sales/VoidSaleModal";
+import { exportSalesToCsv } from "@/lib/exportSales";
 import { formatDateTime, formatNaira } from "@/lib/format";
 import { getApi } from "@/lib/ipc/client";
 import { useSession } from "@/lib/session";
-import { canManageCatalog, canViewAllSales } from "@/shared/permissions";
+import { canExportData, canManageCatalog, canViewAllSales } from "@/shared/permissions";
 import type { Sale, StaffMember } from "@/shared/types/domain";
 
 const SYNC_LABEL: Record<Sale["syncStatus"], string> = {
@@ -38,6 +40,7 @@ export default function SalesPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [reprintingId, setReprintingId] = useState<string | null>(null);
+  const [voidingSale, setVoidingSale] = useState<Sale | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [fromDate, setFromDate] = useState("");
@@ -46,6 +49,10 @@ export default function SalesPage() {
 
   const canVoid = canManageCatalog(session?.accessRole);
   const canFilterByStaff = canViewAllSales(session?.accessRole);
+  const canExport = canExportData(session?.accessRole);
+
+  const [exporting, setExporting] = useState<"filtered" | "all" | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   async function load() {
     const [salesList, staff] = await Promise.all([
@@ -115,16 +122,13 @@ export default function SalesPage() {
       .sort((a, b) => b.latest - a.latest);
   }, [sales]);
 
-  async function handleVoid(sale: Sale) {
-    const reason = window.prompt(`Reason for voiding this ${formatNaira(sale.total)} sale?`);
-    if (!reason) return;
-    setError(null);
-    try {
-      await getApi().sales.void(sale.id, reason);
-      await load();
-    } catch (cause) {
-      setError((cause as Error).message);
-    }
+  // Errors surface inside VoidSaleModal itself (it stays open so the reason
+  // can be fixed/retried), not the page-level banner — rethrow rather than
+  // setError here.
+  async function handleVoid(sale: Sale, reason: string) {
+    await getApi().sales.void(sale.id, reason);
+    setVoidingSale(null);
+    await load();
   }
 
   async function handleReprint(sale: Sale) {
@@ -136,6 +140,36 @@ export default function SalesPage() {
       setError((cause as Error).message);
     } finally {
       setReprintingId(null);
+    }
+  }
+
+  // Exports exactly what's currently on screen — the from/to/staff filters
+  // already applied, whichever view mode is active (grouping doesn't drop
+  // rows, so `sales` is the full filtered set either way).
+  async function handleExportFiltered() {
+    setExporting("filtered");
+    setExportMessage(null);
+    try {
+      setExportMessage(await exportSalesToCsv(sales, staffNames, "sales-filtered.csv"));
+    } catch (cause) {
+      setExportMessage((cause as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  // A fresh, unfiltered fetch — ignores whatever's currently applied above.
+  async function handleExportAll() {
+    setExporting("all");
+    setExportMessage(null);
+    try {
+      const [allSales, staff] = await Promise.all([getApi().sales.list(), getApi().staff.list()]);
+      const names = Object.fromEntries(staff.map((s) => [s.id, s.name]));
+      setExportMessage(await exportSalesToCsv(allSales, names, "sales-all.csv"));
+    } catch (cause) {
+      setExportMessage((cause as Error).message);
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -206,7 +240,7 @@ export default function SalesPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            void handleVoid(sale);
+                            setVoidingSale(sale);
                           }}
                           className="text-sm font-medium text-danger hover:underline"
                         >
@@ -311,6 +345,26 @@ export default function SalesPage() {
           )}
         </div>
 
+        {canExport && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleExportFiltered}
+              disabled={exporting !== null || sales.length === 0}
+              className="h-10 rounded-full border border-border bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              {exporting === "filtered" ? "Exporting…" : "Export filtered (CSV)"}
+            </button>
+            <button
+              onClick={handleExportAll}
+              disabled={exporting !== null}
+              className="h-10 rounded-full border border-border bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              {exporting === "all" ? "Exporting…" : "Export all (CSV)"}
+            </button>
+            {exportMessage && <span className="text-sm text-muted">{exportMessage}</span>}
+          </div>
+        )}
+
         {error && <p className="text-sm text-danger">{error}</p>}
 
         {viewMode === "all" ? (
@@ -348,6 +402,8 @@ export default function SalesPage() {
         onClose={() => setSelectedSale(null)}
         onReprint={handleReprint}
       />
+
+      <VoidSaleModal sale={voidingSale} onClose={() => setVoidingSale(null)} onConfirm={handleVoid} />
     </div>
   );
 }

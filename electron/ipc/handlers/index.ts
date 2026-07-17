@@ -10,6 +10,7 @@ import { registerPrinterHandlers } from "./printer";
 import { registerStaffHandlers } from "./staff";
 import { registerPaymentsHandlers } from "./payments";
 import { registerHeldOrdersHandlers } from "./heldOrders";
+import { registerReportsHandlers } from "./reports";
 
 export function registerAllHandlers(ipcMain: IpcMain, db: ReturnType<typeof getDb>) {
   registerTerminalHandlers(ipcMain, db);
@@ -22,4 +23,5 @@ export function registerAllHandlers(ipcMain: IpcMain, db: ReturnType<typeof getD
   registerStaffHandlers(ipcMain, db);
   registerPaymentsHandlers(ipcMain, db);
   registerHeldOrdersHandlers(ipcMain, db);
+  registerReportsHandlers(ipcMain);
 }

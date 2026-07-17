@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { exportSalesToCsv } from "@/lib/exportSales";
 import { formatDateTime, formatNaira } from "@/lib/format";
 import { getApi } from "@/lib/ipc/client";
 import { useSession } from "@/lib/session";
-import { canReconcilePayments } from "@/shared/permissions";
+import { canExportData, canReconcilePayments } from "@/shared/permissions";
 import type { PaymentReceiptCandidate, ReconcileSummary, Sale } from "@/shared/types/domain";
 
 export default function ReconciliationPage() {
@@ -19,6 +20,10 @@ export default function ReconciliationPage() {
   const [searchingId, setSearchingId] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<Record<string, PaymentReceiptCandidate[]>>({});
   const [matchingRef, setMatchingRef] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"unmatched" | "all" | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+
+  const canExport = canExportData(session?.accessRole);
 
   useEffect(() => {
     if (session && !canReconcilePayments(session.accessRole)) {
@@ -56,6 +61,35 @@ export default function ReconciliationPage() {
       setError((cause as Error).message);
     } finally {
       setReconciling(false);
+    }
+  }
+
+  // Exports exactly the unmatched list currently on screen.
+  async function handleExportUnmatched() {
+    setExporting("unmatched");
+    setExportMessage(null);
+    try {
+      setExportMessage(await exportSalesToCsv(sales, staffNames, "reconciliation-unmatched.csv"));
+    } catch (cause) {
+      setExportMessage((cause as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  // A fresh, unfiltered fetch — every sale regardless of status/match, not
+  // just the unmatched ones shown above.
+  async function handleExportAllSales() {
+    setExporting("all");
+    setExportMessage(null);
+    try {
+      const [allSales, staff] = await Promise.all([getApi().sales.list(), getApi().staff.list()]);
+      const names = Object.fromEntries(staff.map((s) => [s.id, s.name]));
+      setExportMessage(await exportSalesToCsv(allSales, names, "sales-all.csv"));
+    } catch (cause) {
+      setExportMessage((cause as Error).message);
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -117,6 +151,26 @@ export default function ReconciliationPage() {
             {reconciling ? "Reconciling…" : "Reconcile all"}
           </button>
         </div>
+
+        {canExport && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleExportUnmatched}
+              disabled={exporting !== null || sales.length === 0}
+              className="h-10 rounded-full border border-border bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              {exporting === "unmatched" ? "Exporting…" : "Export unmatched (CSV)"}
+            </button>
+            <button
+              onClick={handleExportAllSales}
+              disabled={exporting !== null}
+              className="h-10 rounded-full border border-border bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              {exporting === "all" ? "Exporting…" : "Export all sales (CSV)"}
+            </button>
+            {exportMessage && <span className="text-sm text-muted">{exportMessage}</span>}
+          </div>
+        )}
 
         {summary && (
           <p className="text-sm text-muted">

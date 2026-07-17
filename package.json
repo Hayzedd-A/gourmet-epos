@@ -12,6 +12,7 @@
     "build:electron": "tsup --config tsup.electron.config.ts",
     "build": "npm run build:next && npm run build:electron && electron-builder",
     "build:win": "node scripts/build-win.mjs",
+    "release:win": "node scripts/build-win.mjs --publish",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
@@ -23,6 +24,7 @@
     "better-sqlite3": "^12.11.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
+    "electron-updater": "^6.8.9",
     "jsbarcode": "^3.12.3",
     "next": "16.2.10",
     "react": "19.2.4",
@@ -55,6 +57,11 @@
     "icon": "build/icon.png",
     "directories": {
       "output": "release"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Hayzedd-A",
+      "repo": "gourmet-epos"
     },
     "win": {
       "target": [

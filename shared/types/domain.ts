@@ -50,6 +50,13 @@ export interface ReconcileSummary {
   errors: number;
 }
 
+// Result of a native "Save As" export (see reports:exportSalesCsv) — `path`
+// is null when the user cancels the dialog, which isn't an error.
+export interface ExportResult {
+  saved: boolean;
+  path: string | null;
+}
+
 // "held" is a sale row that hasn't been finalized yet — covers both a
 // quick-stash (park an in-progress cart, resume later) and dine-in (a
 // table's running tab, added to over time). "discarded" is a held order

@@ -23,6 +23,24 @@ const { version: electronVersion } = JSON.parse(
   readFileSync(path.join(projectRoot, "node_modules", "electron", "package.json"), "utf8"),
 );
 
+// `--publish` (npm run release:win) uploads the installer + latest.yml to
+// this repo's GitHub Releases (see package.json's build.publish config),
+// which is what the auto-updater's feed ultimately serves from (via
+// zupa-api's proxy — see electron/updater.ts). Needs a GH_TOKEN env var
+// (a personal access token with at least `repo` scope for this repo) on
+// whichever machine runs this — that's separate from, and unrelated to,
+// GH_RELEASES_TOKEN on zupa-api: this one is build-time only, used by
+// electron-builder to create/upload the release, and never ships inside
+// the app itself.
+const shouldPublish = process.argv.includes("--publish");
+if (shouldPublish && !process.env.GH_TOKEN) {
+  console.error(
+    "GH_TOKEN is not set — required to publish to GitHub Releases. " +
+      "Generate a personal access token with `repo` scope and set GH_TOKEN before running this with --publish.",
+  );
+  process.exit(1);
+}
+
 function run(command, args, cwd) {
   console.log(`$ ${command} ${args.join(" ")}`);
   execFileSync(command, args, { cwd: cwd ?? projectRoot, stdio: "inherit" });
@@ -66,8 +84,10 @@ try {
   }
   console.log("Confirmed: staged binary is a genuine Windows PE DLL.");
 
-  run("npx", ["electron-builder", "--win", "--x64"]);
-  console.log("\nWindows build complete — see release/.");
+  const builderArgs = ["electron-builder", "--win", "--x64"];
+  if (shouldPublish) builderArgs.push("--publish", "always");
+  run("npx", builderArgs);
+  console.log(shouldPublish ? "\nWindows build published to GitHub Releases." : "\nWindows build complete — see release/.");
 } finally {
   restoreLocalNativeBuild();
 }

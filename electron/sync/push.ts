@@ -74,20 +74,23 @@ export async function drainOutbox(db: ReturnType<typeof getDb>): Promise<{ pushe
     }
 
     try {
-      if (!config.apiKey) {
+      if (!config.apiKey || !config.deviceId) {
         throw new Error("Terminal not activated");
       }
       const items = db.select().from(saleItem).where(eq(saleItem.saleId, saleRow.id)).all();
-      const result = await zupa.submitOrder(config.apiKey, {
-        items: buildOrderItems(db, items),
-        // Both are guaranteed set: a sale only ever reaches the outbox once
-        // completed (paymentMethodId is chosen at that point; transactionRef
-        // is whatever's been matched so far, possibly still null).
-        paymentMethodId: saleRow.paymentMethodId!,
-        transactionRef: saleRow.transactionRef ?? undefined,
-        paymentConfirmed: saleRow.matchStatus === "matched",
-        clientReference: saleRow.id,
-      });
+      const result = await zupa.submitOrder(
+        { apiKey: config.apiKey, deviceId: config.deviceId },
+        {
+          items: buildOrderItems(db, items),
+          // Both are guaranteed set: a sale only ever reaches the outbox once
+          // completed (paymentMethodId is chosen at that point; transactionRef
+          // is whatever's been matched so far, possibly still null).
+          paymentMethodId: saleRow.paymentMethodId!,
+          transactionRef: saleRow.transactionRef ?? undefined,
+          paymentConfirmed: saleRow.matchStatus === "matched",
+          clientReference: saleRow.id,
+        },
+      );
       db.update(sale)
         .set({ syncStatus: "synced", serverOrderId: result.id, orderNumber: result.orderNumber })
         .where(eq(sale.id, saleRow.id))

@@ -1,0 +1,1 @@
+ALTER TABLE `terminal_config` ADD `device_id` text;

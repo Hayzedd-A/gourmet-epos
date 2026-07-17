@@ -22,6 +22,13 @@
       "when": 1784117839763,
       "tag": "0002_slimy_thunderbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784197439381,
+      "tag": "0003_slimy_rockslide",
+      "breakpoints": true
     }
   ]
 }

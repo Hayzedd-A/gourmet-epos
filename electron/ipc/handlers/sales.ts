@@ -85,8 +85,15 @@ export function registerSalesHandlers(ipcMain: IpcMain, db: ReturnType<typeof ge
     // we're online, without making checkout wait on the network. Anything
     // not immediately/unambiguously matched is left for the Reconciliation
     // page's end-of-day pass. See docs/ARCHITECTURE.md §8.
-    if (config.apiKey) {
-      void tryAutoMatchSale(db, config.apiKey, saleRow.id, saleRow.total, saleRow.soldAt, saleRow.paymentMethodId);
+    if (config.apiKey && config.deviceId) {
+      void tryAutoMatchSale(
+        db,
+        { apiKey: config.apiKey, deviceId: config.deviceId },
+        saleRow.id,
+        saleRow.total,
+        saleRow.soldAt,
+        saleRow.paymentMethodId,
+      );
     }
 
     return assembleSale(db, saleRow);

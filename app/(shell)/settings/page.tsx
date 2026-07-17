@@ -27,6 +27,10 @@ export default function SettingsPage() {
   const [storeEmail, setStoreEmail] = useState("");
   const [savingStoreInfo, setSavingStoreInfo] = useState(false);
 
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [activating, setActivating] = useState(false);
+  const [activateResult, setActivateResult] = useState<{ ok: boolean; message: string } | null>(null);
+
   async function loadPrinters() {
     setLoadingPrinters(true);
     try {
@@ -61,6 +65,25 @@ export default function SettingsPage() {
       await getApi().sync.triggerNow();
     } finally {
       setSyncing(false);
+    }
+  }
+
+  // Also the recovery path for a device-auth issue (e.g. the API key was
+  // rotated server-side, or this device's local id somehow changed) — this
+  // isn't gated behind "not yet activated", so re-submitting a key here
+  // re-validates/re-binds the same way first activation does. See
+  // electron/ipc/handlers/terminal.ts and docs/ARCHITECTURE.md §6.
+  async function activate() {
+    setActivating(true);
+    setActivateResult(null);
+    try {
+      await getApi().terminal.activate(apiKeyInput);
+      setApiKeyInput("");
+      setActivateResult({ ok: true, message: "Terminal validated." });
+    } catch (cause) {
+      setActivateResult({ ok: false, message: (cause as Error).message });
+    } finally {
+      setActivating(false);
     }
   }
 
@@ -152,6 +175,26 @@ export default function SettingsPage() {
           <Button onClick={syncNow} loading={syncing} className="self-start">
             Sync now
           </Button>
+
+          <label className="flex flex-col gap-1.5 text-sm">
+            <span className="text-muted">
+              {syncState?.activated ? "Re-enter API key (e.g. after a rotated key or device error)" : "Terminal API key"}
+            </span>
+            <div className="flex gap-2">
+              <input
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Paste the key generated at registration"
+                className="font-figures h-10 flex-1 rounded-[var(--radius-control)] border border-border bg-bg px-3 text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              />
+              <Button onClick={activate} loading={activating} disabled={!apiKeyInput.trim()}>
+                {syncState?.activated ? "Revalidate" : "Activate"}
+              </Button>
+            </div>
+          </label>
+          {activateResult && (
+            <p className={`text-xs ${activateResult.ok ? "text-success" : "text-danger"}`}>{activateResult.message}</p>
+          )}
         </div>
 
         <div className="flex items-center justify-between rounded-[var(--radius-panel)] border border-border bg-surface p-5">
